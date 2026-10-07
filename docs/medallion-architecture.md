@@ -1,36 +1,36 @@
 # 🏛️ Medallion Architecture
 
-سندی جامع درباره‌ی پیاده‌سازی معماری مدالیون در پروژه‌ی Streaming Data Pipeline.
+A comprehensive guide to implementing the Medallion Architecture in the Streaming Data Pipeline project.
 
-**نسخه:** 1.0.0  
-**آخرین به‌روزرسانی:** 2026-10-07  
-**نسخه‌ی ClickHouse:** 24.8  
-**نسخه‌ی Kafka:** 3.9 (KRaft mode)
-
----
-
-## فهرست مطالب
-
-1. [معرفی معماری مدالیون](#۱-معرفی-معماری-مدالیون)
-2. [چرا معماری مدالیون؟](#۲-چرا-معماری-مدالیون)
-3. [نمای کلی معماری پروژه](#۳-نمای-کلی-معماری-پروژه)
-4. [لایه‌ی Bronze](#۴-لایهی-bronze)
-5. [لایه‌ی Silver](#۵-لایهی-silver)
-6. [لایه‌ی Gold](#۶-لایهی-gold)
-7. [جریان داده در هر لایه](#۷-جریان-داده-در-هر-لایه)
-8. [تصمیمات طراحی](#۸-تصمیمات-طراحی)
-9. [نکات عملیاتی](#۹-نکات-عملیاتی)
-10. [مراجع](#۱۰-مراجع)
+**Version:** 1.0.0
+**Last Updated:** 2026-10-07
+**ClickHouse Version:** 24.8
+**Kafka Version:** 3.9 (KRaft mode)
 
 ---
 
-## ۱. معرفی معماری مدالیون
+## Table of Contents
 
-**معماری مدالیون** (Medallion Architecture) یک الگوی طراحی در مهندسی داده است که داده‌ها را در **سه لایه‌ی متوالی** سازماندهی می‌کند. هر لایه سطح بالاتری از **پالایش، اعتبارسنجی و ارزش تجاری** را ارائه می‌دهد.
+1. [Introduction to Medallion Architecture](#1-introduction-to-medallion-architecture)
+2. [Why Medallion Architecture?](#2-why-medallion-architecture)
+3. [Project Architecture Overview](#3-project-architecture-overview)
+4. [Bronze Layer](#4-bronze-layer)
+5. [Silver Layer](#5-silver-layer)
+6. [Gold Layer](#6-gold-layer)
+7. [Data Flow Across Layers](#7-data-flow-across-layers)
+8. [Design Decisions](#8-design-decisions)
+9. [Operational Notes](#9-operational-notes)
+10. [References](#10-references)
 
-این معماری اولین بار توسط **Databricks** معرفی شد و امروز به یک استاندارد صنعتی در ساخت Lakehouse و Data Pipeline تبدیل شده است.
+---
 
-### سه لایه‌ی اصلی
+## 1. Introduction to Medallion Architecture
+
+**Medallion Architecture** is a design pattern in data engineering that organizes data into **three sequential layers**. Each layer provides a higher level of **refinement, validation, and business value**.
+
+This architecture was first introduced by **Databricks** and has become an industry standard for building Lakehouses and Data Pipelines.
+
+### The Three Main Layers
 
 ```
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
@@ -38,75 +38,75 @@
 │   (Raw)      │    │  (Clean)     │    │ (Business)   │
 └──────────────┘    └──────────────┘    └──────────────┘
 
-داده خام            داده پاک‌سازی‌شده      داده تجاری
-همان‌طور که          معتبر، یکپارچه،       KPI، گزارش،
-دریافت شد           غنی‌سازی‌شده            آماده برای BI/ML
+Raw data            Cleaned data         Business data
+Exactly as          Validated,           KPIs, reports,
+received            enriched             ready for BI/ML
 ```
 
-### چرا "مدالیون"؟
+### Why "Medallion"?
 
-کلمه‌ی Medallion به معنای **مدال** یا **نشان** است. این نام از این ایده می‌آید که هر لایه مانند یک مدال، سطح بالاتری از **ارزش** را نشان می‌دهد:
+The word "Medallion" means a **medal** or **badge**. The name comes from the idea that each layer, like a medal, represents a higher level of **value**:
 
-- 🥉 **Bronze (برنز)**: کمترین ارزش تجاری، اما بیشترین جزئیات
-- 🥈 **Silver (نقره)**: ارزش متوسط، داده‌ی پاک و ساخت‌یافته
-- 🥇 **Gold (طلا)**: بالاترین ارزش تجاری، آماده برای تصمیم‌گیری
+- 🥉 **Bronze**: Lowest business value, but highest detail
+- 🥈 **Silver**: Medium value, clean and structured data
+- 🥇 **Gold**: Highest business value, ready for decision-making
 
 ---
 
-## ۲. چرا معماری مدالیون؟
+## 2. Why Medallion Architecture?
 
-### مزایای اصلی
+### Main Benefits
 
-| مزیت | توضیح |
+| Benefit | Description |
 |---|---|
-| **قابلیت بازپخش (Replayability)** | اگر منطق Silver را تغییر دهید، می‌توانید دوباره از Bronze پردازش کنید بدون اینکه به Kafka برگردید. |
-| **حفظ تاریخچه** | داده‌ی خام همیشه در Bronze باقی می‌ماند. هیچ چیز از بین نمی‌رود. |
-| **دیباگ آسان** | اگر داده‌ی Silver مشکل داشت، به Bronze برگردید و ببینید کجای تبدیل اشتباه بوده. |
-| **جداسازی مسئولیت‌ها** | هر لایه فقط به لایه‌ی قبل وابسته است. تغییر در یک لایه، لایه‌های دیگر را تحت تأثیر قرار نمی‌دهد. |
-| **عملکرد بهتر** | Gold فقط شامل داده‌ی تجمیعی است، پس کوئری‌ها بسیار سریع هستند. |
-| **انطباق با استانداردها** | این معماری در Databricks، Snowflake، BigQuery و... استاندارد است. |
-| **کاهش هزینه** | می‌توانید TTLهای متفاوت برای هر لایه تعریف کنید. Bronze سریع‌تر حذف می‌شود، Gold بیشتر می‌ماند. |
+| **Replayability** | If you change the Silver logic, you can reprocess from Bronze without going back to Kafka. |
+| **History Preservation** | Raw data always stays in Bronze. Nothing is lost. |
+| **Easy Debugging** | If Silver data has issues, go back to Bronze and find where the transformation went wrong. |
+| **Separation of Concerns** | Each layer depends only on the previous one. Changes in one layer don't affect others. |
+| **Better Performance** | Gold contains only aggregated data, so queries are very fast. |
+| **Standards Compliance** | This architecture is standard in Databricks, Snowflake, BigQuery, etc. |
+| **Cost Reduction** | You can define different TTLs for each layer. Bronze expires faster, Gold lives longer. |
 
-### مقایسه با رویکرد سنتی
+### Comparison with the Traditional Approach
 
-**رویکرد سنتی (بدون مدالیون):**
+**Traditional approach (without Medallion):**
 ```
 Source → ETL → Data Warehouse → BI
 ```
-**مشکلات:**
-- اگر ETL اشتباه باشد، داده از دست می‌رود.
-- نمی‌توانید داده‌ی خام را دوباره پردازش کنید.
-- دیباگ سخت است.
+**Problems:**
+- If the ETL is wrong, data is lost.
+- You can't reprocess raw data.
+- Debugging is hard.
 
-**رویکرد مدالیون:**
+**Medallion approach:**
 ```
 Source → Bronze → Silver → Gold → BI
 ```
-**مزایا:**
-- داده‌ی خام همیشه در دسترس است.
-- می‌توانید هر لایه را جداگانه بازسازی کنید.
-- دیباگ آسان است.
+**Benefits:**
+- Raw data is always available.
+- You can rebuild each layer separately.
+- Debugging is easy.
 
 ---
 
-## ۳. نمای کلی معماری پروژه
+## 3. Project Architecture Overview
 
-### نمودار کامل
+### Full Diagram
 
 ```
 ┌─────────────────────┐
-│  Wikimedia SSE      │  ← منبع داده (جریان زنده‌ی ویرایش‌های ویکی‌پدیا)
+│  Wikimedia SSE      │  ← Data source (live Wikipedia edit stream)
 └──────────┬──────────┘
            │
            ▼
 ┌─────────────────────┐
 │  Producer.py        │  ← Python + kafka-python
-│  (کل رویداد JSON)   │
+│  (Full JSON event)  │
 └──────────┬──────────┘
            │
            ▼
 ┌─────────────────────┐
-│  Kafka: wiki-events │  ← 3 پارتیشن، Replication Factor 1
+│  Kafka: wiki-events │  ← 3 partitions, Replication Factor 1
 └──────────┬──────────┘
            │
            ▼
@@ -115,7 +115,7 @@ Source → Bronze → Silver → Gold → BI
 │                                                             │
 │  ┌───────────────────────────────────────┐                  │
 │  │ wiki_events_queue (Kafka Engine)      │                  │
-│  │ - فرمت: JSONAsString                  │                  │
+│  │ - format: JSONAsString                │                  │
 │  │ - kafka_num_consumers: 3              │                  │
 │  │ - kafka_handle_error_mode: stream     │                  │
 │  └────────────┬──────────────────────────┘                  │
@@ -128,35 +128,35 @@ Source → Bronze → Silver → Gold → BI
 │  │ 🥉 BRONZE                      │                         │
 │  │ ┌──────────────────────────┐   │                         │
 │  │ │ bronze_wiki_events       │   │  ← raw_message          │
-│  │ │ (MergeTree)              │   │  ← + کafka metadata     │
-│  │ │ TTL: 30 روز              │   │                         │
+│  │ │ (MergeTree)              │   │  ← + Kafka metadata     │
+│  │ │ TTL: 30 days             │   │                         │
 │  │ └────────────┬─────────────┘   │                         │
 │  │              │                  │                         │
 │  │ ┌────────────▼─────────────┐   │                         │
-│  │ │ bronze_wiki_events_errors│   │  ← پیام‌های خطادار      │
-│  │ │ TTL: 7 روز               │   │                         │
+│  │ │ bronze_wiki_events_errors│   │  ← error messages       │
+│  │ │ TTL: 7 days              │   │                         │
 │  │ └──────────────────────────┘   │                         │
 │  └──────────────┬─────────────────┘                         │
 │                 │                                            │
-│                 ▼ (تجزیه JSON)                              │
+│                 ▼ (JSON parsing)                            │
 │  ┌────────────────────────────────┐                         │
 │  │ 🥈 SILVER                      │                         │
 │  │ ┌──────────────────────────┐   │                         │
-│  │ │ silver_wiki_events       │   │  ← فیلدهای استخراج‌شده   │
-│  │ │ (ReplacingMergeTree)     │   │  ← اعتبارسنجی‌شده        │
-│  │ │ TTL: 90 روز              │   │  ← رفع تکرار              │
+│  │ │ silver_wiki_events       │   │  ← extracted fields     │
+│  │ │ (ReplacingMergeTree)     │   │  ← validated            │
+│  │ │ TTL: 90 days             │   │  ← deduplicated         │
 │  │ └────────────┬─────────────┘   │                         │
 │  └──────────────┬─────────────────┘                         │
 │                 │                                            │
-│                 ▼ (تجمیع)                                   │
+│                 ▼ (aggregation)                             │
 │  ┌────────────────────────────────┐                         │
 │  │ 🥇 GOLD                        │                         │
 │  │ ┌──────────────────────────┐   │                         │
-│  │ │ gold_wiki_hourly_stats   │   │  ← آمار ساعتی           │
-│  │ │ gold_top_users_daily     │   │  ← پرکارترین کاربران    │
-│  │ │ gold_top_pages_hourly    │   │  ← پرجنب‌وجوش‌ترین صفحات  │
-│  │ │ gold_language_hourly     │   │  ← توزیع زبانی           │
-│  │ │ TTL: 180-365 روز         │   │                         │
+│  │ │ gold_wiki_hourly_stats   │   │  ← hourly stats         │
+│  │ │ gold_top_users_daily     │   │  ← top users            │
+│  │ │ gold_top_pages_hourly    │   │  ← top pages            │
+│  │ │ gold_language_hourly     │   │  ← language distribution│
+│  │ │ TTL: 180-365 days        │   │                         │
 │  │ └──────────────────────────┘   │                         │
 │  └────────────────────────────────┘                         │
 └─────────────────────────────────────────────────────────────┘
@@ -168,47 +168,47 @@ Source → Bronze → Silver → Gold → BI
                     └──────────────────┘
 ```
 
-### جدول خلاصه‌ی جداول
+### Tables Summary
 
-| لایه | جدول | موتور | TTL | مصرف‌کننده |
+| Layer | Table | Engine | TTL | Consumer |
 |---|---|---|---|---|
-| Bronze | `bronze_wiki_events` | MergeTree | ۳۰ روز | مهندسین داده |
-| Bronze | `bronze_wiki_events_errors` | MergeTree | ۷ روز | مهندسین داده |
-| Silver | `silver_wiki_events` | ReplacingMergeTree | ۹۰ روز | تحلیل‌گران |
-| Gold | `gold_wiki_hourly_stats` | SummingMergeTree | ۱ سال | BI |
-| Gold | `gold_top_users_daily` | ReplacingMergeTree | ۱ سال | BI |
-| Gold | `gold_top_pages_hourly` | ReplacingMergeTree | ۱۸۰ روز | BI |
-| Gold | `gold_language_hourly` | SummingMergeTree | ۱ سال | BI |
+| Bronze | `bronze_wiki_events` | MergeTree | 30 days | Data Engineers |
+| Bronze | `bronze_wiki_events_errors` | MergeTree | 7 days | Data Engineers |
+| Silver | `silver_wiki_events` | ReplacingMergeTree | 90 days | Analysts |
+| Gold | `gold_wiki_hourly_stats` | SummingMergeTree | 1 year | BI |
+| Gold | `gold_top_users_daily` | ReplacingMergeTree | 1 year | BI |
+| Gold | `gold_top_pages_hourly` | ReplacingMergeTree | 180 days | BI |
+| Gold | `gold_language_hourly` | SummingMergeTree | 1 year | BI |
 
 ---
 
-## ۴. لایه‌ی Bronze
+## 4. Bronze Layer
 
-### هدف
+### Goal
 
-**ذخیره‌ی داده‌ی خام ۱۰۰٪ بدون هیچ تبدیلی.** این لایه، "حقیقت مطلق" (Source of Truth) پروژه است.
+**Store 100% raw data without any transformation.** This layer is the project's "Source of Truth."
 
-### اصول طراحی
+### Design Principles
 
-1. **هیچ فیلدی حذف نمی‌شود.** کل JSON رویداد ذخیره می‌شود.
-2. **هیچ تبدیلی انجام نمی‌شود.** نه تبدیل نوع، نه پاک‌سازی، نه فیلتر.
-3. **فقط Append.** داده‌ها هرگز تغییر نمی‌کنند یا حذف نمی‌شوند (به جز TTL).
-4. **متادیتای Kafka حفظ می‌شود.** topic، partition، offset، timestamp.
+1. **No field is removed.** The entire JSON event is stored.
+2. **No transformation is performed.** No type conversion, no cleaning, no filtering.
+3. **Append-only.** Data is never modified or deleted (except by TTL).
+4. **Kafka metadata is preserved.** topic, partition, offset, timestamp.
 
-### جداول
+### Tables
 
 #### `bronze_wiki_events`
 
 ```sql
 CREATE TABLE tutorial.bronze_wiki_events
 (
-    raw_message     String,           -- کل JSON رویداد
-    kafka_topic     String,           -- نام تاپیک
-    kafka_partition UInt64,           -- شماره پارتیشن
-    kafka_offset    UInt64,           -- Offset پیام
-    kafka_timestamp DateTime,         -- زمان ثبت در Kafka
-    kafka_key       String,           -- کلید پیام
-    ingested_at     DateTime DEFAULT now()  -- زمان ورود به Bronze
+    raw_message     String,           -- Full JSON event
+    kafka_topic     String,           -- Topic name
+    kafka_partition UInt64,           -- Partition number
+    kafka_offset    UInt64,           -- Message offset
+    kafka_timestamp DateTime,         -- Kafka ingestion time
+    kafka_key       String,           -- Message key
+    ingested_at     DateTime DEFAULT now()  -- Bronze ingestion time
 )
 ENGINE = MergeTree()
 PARTITION BY toYYYYMMDD(ingested_at)
@@ -216,14 +216,14 @@ ORDER BY (ingested_at, kafka_partition, kafka_offset)
 TTL ingested_at + INTERVAL 30 DAY;
 ```
 
-**توضیح تصمیمات:**
+**Design decisions:**
 
-| تصمیم | دلیل |
+| Decision | Reason |
 |---|---|
-| `raw_message String` | کل JSON به صورت یک رشته. هیچ فیلدی از دست نمی‌رود. |
-| `PARTITION BY toYYYYMMDD(ingested_at)` | پارتیشن‌بندی روزانه بر اساس زمان **ورود** (نه زمان رویداد). چون Bronze برای دیباگ است، زمان ورود مهم‌تر است. |
-| `ORDER BY (ingested_at, kafka_partition, kafka_offset)` | امکان ردیابی پیام‌های Kafka و کوئری‌های بازه‌ای. |
-| `TTL 30 روز` | داده‌ی خام حجیم است. ۳۰ روز برای دیباگ کافی است. |
+| `raw_message String` | Full JSON as a string. No field is lost. |
+| `PARTITION BY toYYYYMMDD(ingested_at)` | Daily partitioning by **ingestion** time (not event time). Since Bronze is for debugging, ingestion time matters more. |
+| `ORDER BY (ingested_at, kafka_partition, kafka_offset)` | Enables Kafka message tracking and range queries. |
+| `TTL 30 days` | Raw data is bulky. 30 days is enough for debugging. |
 
 #### `bronze_wiki_events_errors`
 
@@ -233,8 +233,8 @@ CREATE TABLE tutorial.bronze_wiki_events_errors
     kafka_topic     String,
     kafka_partition UInt64,
     kafka_offset    UInt64,
-    raw_message     String,       -- پیام خام خطادار
-    error_message   String,       -- متن خطا
+    raw_message     String,       -- Failed raw message
+    error_message   String,       -- Error text
     ingested_at     DateTime DEFAULT now()
 )
 ENGINE = MergeTree()
@@ -255,88 +255,88 @@ SETTINGS
     kafka_broker_list = 'kafka-broker:29092',
     kafka_topic_list = 'wiki-events',
     kafka_group_name = 'clickhouse-bronze-consumer-v2',
-    kafka_format = 'JSONAsString',         -- ← کل JSON به صورت رشته
+    kafka_format = 'JSONAsString',         -- ← Full JSON as string
     kafka_num_consumers = 3,
-    kafka_handle_error_mode = 'stream';    -- ← مدیریت خطا
+    kafka_handle_error_mode = 'stream';    -- ← Error handling
 ```
 
-**نکات مهم:**
+**Important notes:**
 
-- **`JSONAsString`**: کل JSON را به صورت یک رشته دریافت می‌کند. اگر از `JSONEachRow` استفاده کنیم، ClickHouse فیلدها را تجزیه می‌کند و اگر ساختار عوض شود، پیام رد می‌شود.
-- **`kafka_handle_error_mode = 'stream'`**: پیام‌های خطادار به ستون مجازی `_error` می‌روند و جریان متوقف نمی‌شود.
-- **`kafka_num_consumers = 3`**: چون تاپیک ۳ پارتیشن دارد، ClickHouse از هر ۳ پارتیشن همزمان می‌خواند.
+- **`JSONAsString`**: Receives the entire JSON as a string. If we used `JSONEachRow`, ClickHouse would parse fields and reject messages if the schema changes.
+- **`kafka_handle_error_mode = 'stream'`**: Erroneous messages go to the virtual `_error` column and the stream doesn't stop.
+- **`kafka_num_consumers = 3`**: Since the topic has 3 partitions, ClickHouse reads from all 3 in parallel.
 
-### ستون‌های مجازی
+### Virtual Columns
 
-هنگام خواندن از `wiki_events_queue`، این ستون‌ها در دسترس هستند:
+When reading from `wiki_events_queue`, these columns are available:
 
-| ستون | نوع | توضیح |
+| Column | Type | Description |
 |---|---|---|
-| `_topic` | String | نام تاپیک |
-| `_partition` | UInt64 | شماره پارتیشن |
-| `_offset` | UInt64 | Offset پیام |
-| `_timestamp` | Nullable(DateTime) | زمان ثبت در Kafka |
-| `_key` | String | کلید پیام |
-| `_error` | String | متن خطا (اگر پیام خراب باشد) |
-| `_raw_message` | String | پیام خام (اگر پیام خراب باشد) |
+| `_topic` | String | Topic name |
+| `_partition` | UInt64 | Partition number |
+| `_offset` | UInt64 | Message offset |
+| `_timestamp` | Nullable(DateTime) | Kafka ingestion time |
+| `_key` | String | Message key |
+| `_error` | String | Error text (if message is broken) |
+| `_raw_message` | String | Raw message (if message is broken) |
 
 ---
 
-## ۵. لایه‌ی Silver
+## 5. Silver Layer
 
-### هدف
+### Goal
 
-**پاک‌سازی، اعتبارسنجی و تجزیه‌ی داده‌ی خام.** Silver جایی است که داده‌ی خام به داده‌ی ساخت‌یافته و قابل استفاده تبدیل می‌شود.
+**Clean, validate, and parse raw data.** Silver is where raw data becomes structured and usable.
 
-### اصول طراحی
+### Design Principles
 
-1. **تجزیه JSON:** استخراج فیلدهای کلیدی از `raw_message`.
-2. **اعتبارسنجی:** فیلتر کردن رویدادهای ناقص یا نامعتبر.
-3. **رفع تکرار:** با `ReplacingMergeTree`.
-4. **غنی‌سازی:** اضافه کردن فیلدهای مشتق‌شده (مثل `language` از `wiki`).
-5. **تبدیل نوع:** تبدیل رشته به DateTime، UInt8، و...
+1. **JSON Parsing:** Extract key fields from `raw_message`.
+2. **Validation:** Filter out incomplete or invalid events.
+3. **Deduplication:** Using `ReplacingMergeTree`.
+4. **Enrichment:** Add derived fields (like `language` from `wiki`).
+5. **Type Conversion:** Convert strings to DateTime, UInt8, etc.
 
-### جدول Silver
+### Silver Table
 
 ```sql
 CREATE TABLE tutorial.silver_wiki_events
 (
-    -- شناسه‌ها
-    event_id          UInt64,              -- id رویداد
+    -- Identifiers
+    event_id          UInt64,              -- Event id
     event_uuid        String,              -- meta.id (UUID)
 
-    -- نوع رویداد
+    -- Event type
     event_type        LowCardinality(String),  -- edit, new
-    namespace         Int32,               -- 0 = مقاله اصلی
+    namespace         Int32,               -- 0 = main article
 
-    -- صفحه
+    -- Page
     title             String,
     page_id           UInt64,
 
-    -- کاربر
+    -- User
     user              String,
-    user_is_bot       UInt8,               -- 1 اگر ربات
-    user_is_anonymous UInt8,               -- 1 اگر IP
+    user_is_bot       UInt8,               -- 1 if bot
+    user_is_anonymous UInt8,               -- 1 if IP
 
-    -- ویکی
+    -- Wiki
     wiki              LowCardinality(String),  -- enwiki, fawiki
-    language          LowCardinality(String),  -- en, fa (استخراج‌شده)
+    language          LowCardinality(String),  -- en, fa (extracted)
     domain            LowCardinality(String),  -- en.wikipedia.org
 
-    -- محتوا
-    comment           String,              -- حداکثر ۵۰۰ کاراکتر
-    is_minor          UInt8,               -- ویرایش جزئی
-    is_patrolled      UInt8,               -- گشت‌زده‌شده
+    -- Content
+    comment           String,              -- Max 500 chars
+    is_minor          UInt8,               -- Minor edit
+    is_patrolled      UInt8,               -- Patrolled
 
-    -- تغییرات
+    -- Changes
     length_old        Int64,
     length_new        Int64,
     length_delta      Int64,               -- new - old
     revision_old      UInt64,
     revision_new      UInt64,
 
-    -- زمان‌ها
-    event_timestamp   DateTime,            -- زمان وقوع رویداد
+    -- Timestamps
+    event_timestamp   DateTime,            -- Event occurrence time
     ingested_at       DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(ingested_at)
@@ -345,15 +345,15 @@ ORDER BY (event_timestamp, wiki, event_id)
 TTL event_timestamp + INTERVAL 90 DAY;
 ```
 
-**توضیح تصمیمات:**
+**Design decisions:**
 
-| تصمیم | دلیل |
+| Decision | Reason |
 |---|---|
-| `ReplacingMergeTree(ingested_at)` | اگر رویداد تکراری با `event_id` یکسان بود، آخرین نسخه نگه داشته می‌شود. |
-| `PARTITION BY toYYYYMMDD(event_timestamp)` | پارتیشن‌بندی بر اساس زمان **رویداد** (نه ورود). |
-| `ORDER BY (event_timestamp, wiki, event_id)` | کوئری‌های زمانی و فیلتر بر اساس ویکی سریع می‌شوند. |
-| `LowCardinality(String)` | برای فیلدهایی که مقادیر تکراری زیادی دارند (wiki, language). |
-| `TTL 90 روز` | داده‌ی پاک‌شده، حجم کمتری دارد و برای تحلیل‌های بلندمدت مفید است. |
+| `ReplacingMergeTree(ingested_at)` | If a duplicate event with the same `event_id` exists, the latest version is kept. |
+| `PARTITION BY toYYYYMMDD(event_timestamp)` | Partitioning by **event** time (not ingestion). |
+| `ORDER BY (event_timestamp, wiki, event_id)` | Time-based queries and wiki filters become fast. |
+| `LowCardinality(String)` | For fields with many duplicate values (wiki, language). |
+| `TTL 90 days` | Cleaned data is smaller and useful for medium-term analytics. |
 
 ### Materialized View
 
@@ -371,7 +371,7 @@ SELECT
     toUInt8(JSONExtractBool(raw_message, 'bot')) AS user_is_bot,
     toUInt8(JSONExtractString(raw_message, 'user') LIKE '~%') AS user_is_anonymous,
     JSONExtractString(raw_message, 'wiki') AS wiki,
-    -- استخراج زبان از wiki: enwiki → en, fawiki → fa
+    -- Extract language from wiki: enwiki → en, fawiki → fa
     replaceRegexpOne(JSONExtractString(raw_message, 'wiki'), 'wiki$', '') AS language,
     JSONExtractString(raw_message, 'meta', 'domain') AS domain,
     substring(JSONExtractString(raw_message, 'comment'), 1, 500) AS comment,
@@ -390,11 +390,11 @@ WHERE JSONExtractString(raw_message, 'type') IN ('edit', 'new')
   AND JSONExtractString(raw_message, 'user') != '';
 ```
 
-### چرا `language` از `wiki` استخراج می‌شود؟
+### Why `language` is Extracted from `wiki`
 
-در داده‌ی ویکی‌مدیا، فیلد `meta.language` **خالی** است (در SSE). زبان در فیلد `wiki` است که به شکل `enwiki`, `fawiki`, `dewiki` و... ذخیره می‌شود.
+In Wikimedia data, the `meta.language` field is **empty** (in SSE). The language is in the `wiki` field, which is stored as `enwiki`, `fawiki`, `dewiki`, etc.
 
-**استخراج:**
+**Extraction:**
 ```sql
 replaceRegexpOne('enwiki', 'wiki$', '')  -- → 'en'
 replaceRegexpOne('fawiki', 'wiki$', '')  -- → 'fa'
@@ -403,7 +403,7 @@ replaceRegexpOne('commonswiki', 'wiki$', '')  -- → 'commons'
 
 ### Backfill
 
-از آنجا که MV فقط به داده‌های **جدید** اعمال می‌شود، برای انتقال داده‌های تاریخی از این دستور استفاده می‌کنیم:
+Since Materialized Views only apply to **new** data, we use this command to migrate historical data:
 
 ```sql
 INSERT INTO tutorial.silver_wiki_events
@@ -412,22 +412,22 @@ SELECT ... FROM tutorial.bronze_wiki_events WHERE ...;
 
 ---
 
-## ۶. لایه‌ی Gold
+## 6. Gold Layer
 
-### هدف
+### Goal
 
-**ساخت KPI و آمار تجمیعی برای مصرف مستقیم BI.** Gold جایی است که داده ارزش تجاری واقعی پیدا می‌کند.
+**Build KPIs and aggregated statistics for direct BI consumption.** Gold is where data gains real business value.
 
-### اصول طراحی
+### Design Principles
 
-1. **تجمیع:** داده‌ها بر اساس بازه‌های زمانی (ساعت، روز) تجمیع می‌شوند.
-2. **موتور مناسب:** `SummingMergeTree` برای اعداد، `ReplacingMergeTree` برای جایگزینی.
-3. **بهینه برای کوئری:** جداول کوچک، کوئری سریع.
-4. **TTL بلندمدت:** چون حجم داده کم است، می‌توان نگهداری طولانی‌تر داشت.
+1. **Aggregation:** Data is aggregated by time windows (hourly, daily).
+2. **Right Engine:** `SummingMergeTree` for numbers, `ReplacingMergeTree` for replacement.
+3. **Query-Optimized:** Small tables, fast queries.
+4. **Long TTL:** Since data volume is small, longer retention is possible.
 
-### جدول ۱: `gold_wiki_hourly_stats`
+### Table 1: `gold_wiki_hourly_stats`
 
-**سوال تجاری:** "در هر ساعت، هر ویکی چقدر فعالیت دارد؟"
+**Business question:** "How active is each wiki per hour?"
 
 ```sql
 CREATE TABLE tutorial.gold_wiki_hourly_stats
@@ -450,9 +450,9 @@ ORDER BY (hour, wiki)
 TTL hour + INTERVAL 365 DAY;
 ```
 
-### جدول ۲: `gold_top_users_daily`
+### Table 2: `gold_top_users_daily`
 
-**سوال تجاری:** "هر روز، پرکارترین کاربران هر ویکی چه کسانی هستند؟"
+**Business question:** "Who are the top users per wiki each day?"
 
 ```sql
 CREATE TABLE tutorial.gold_top_users_daily
@@ -474,9 +474,9 @@ ORDER BY (day, wiki, user)
 TTL day + INTERVAL 365 DAY;
 ```
 
-### جدول ۳: `gold_top_pages_hourly`
+### Table 3: `gold_top_pages_hourly`
 
-**سوال تجاری:** "هر ساعت، پرجنب‌وجوش‌ترین صفحات کدامند؟"
+**Business question:** "Which pages are the hottest each hour?"
 
 ```sql
 CREATE TABLE tutorial.gold_top_pages_hourly
@@ -496,9 +496,9 @@ ORDER BY (hour, wiki, title)
 TTL hour + INTERVAL 180 DAY;
 ```
 
-### جدول ۴: `gold_language_hourly`
+### Table 4: `gold_language_hourly`
 
-**سوال تجاری:** "توزیع زبانی فعالیت‌ها در هر ساعت چگونه است؟"
+**Business question:** "What's the language distribution of activity each hour?"
 
 ```sql
 CREATE TABLE tutorial.gold_language_hourly
@@ -516,137 +516,137 @@ ORDER BY (hour, language)
 TTL hour + INTERVAL 365 DAY;
 ```
 
-### چرا `SummingMergeTree` و `ReplacingMergeTree`؟
+### Why `SummingMergeTree` and `ReplacingMergeTree`?
 
-**`SummingMergeTree`** برای جداولی که فقط اعداد دارند:
-- وقتی رکوردهای با کلید یکسان ادغام می‌شوند، اعداد **جمع** می‌شوند.
-- مثال: `gold_wiki_hourly_stats` — اگر دو رکورد برای `(hour='12:00', wiki='enwiki')` باشد، `total_edits` جمع می‌شود.
+**`SummingMergeTree`** for tables with only numbers:
+- When rows with the same key are merged, the numbers are **summed**.
+- Example: `gold_wiki_hourly_stats` — if two rows exist for `(hour='12:00', wiki='enwiki')`, `total_edits` is summed.
 
-**`ReplacingMergeTree`** برای جداولی که آخرین وضعیت مهم است:
-- وقتی رکوردهای با کلید یکسان ادغام می‌شوند، **آخرین** نسخه نگه داشته می‌شود.
-- مثال: `gold_top_users_daily` — برای `(day='2026-10-07', wiki='enwiki', user='Ali')` فقط آخرین وضعیت مهم است.
+**`ReplacingMergeTree`** for tables where the latest state matters:
+- When rows with the same key are merged, the **latest** version is kept.
+- Example: `gold_top_users_daily` — for `(day='2026-10-07', wiki='enwiki', user='Ali')`, only the latest state matters.
 
 ---
 
-## ۷. جریان داده در هر لایه
+## 7. Data Flow Across Layers
 
-### مرحله‌ی ۱: از ویکی‌مدیا به Kafka
+### Step 1: Wikimedia to Kafka
 
 ```
 Wikimedia SSE → Producer.py → Kafka topic "wiki-events"
 ```
 
-- Producer کل رویداد JSON را می‌فرستد.
-- `key = title or meta.id` → حفظ ترتیب رویدادهای یک صفحه.
-- `acks=all` + `enable_idempotence=True` → جلوگیری از ارسال تکراری.
+- The Producer sends the full JSON event.
+- `key = title or meta.id` → preserves event order per page.
+- `acks=all` + `enable_idempotence=True` → prevents duplicate sends.
 
-### مرحله‌ی ۲: از Kafka به Bronze
+### Step 2: Kafka to Bronze
 
 ```
 Kafka → wiki_events_queue (Kafka Engine) → bronze_wiki_events
 ```
 
-- Kafka Engine Table با فرمت `JSONAsString` کل JSON را می‌خواند.
-- Materialized View داده‌های سالم را به `bronze_wiki_events` منتقل می‌کند.
-- پیام‌های خراب به `bronze_wiki_events_errors` می‌روند.
+- The Kafka Engine Table reads the full JSON as `JSONAsString`.
+- Materialized View moves healthy data to `bronze_wiki_events`.
+- Broken messages go to `bronze_wiki_events_errors`.
 
-### مرحله‌ی ۳: از Bronze به Silver
+### Step 3: Bronze to Silver
 
 ```
 bronze_wiki_events → silver_wiki_events_mv → silver_wiki_events
 ```
 
-- MV داده‌ی خام را تجزیه می‌کند.
-- فیلدها استخراج می‌شوند.
-- اعتبارسنجی انجام می‌شود.
-- زبان از `wiki` استخراج می‌شود.
+- The MV parses the raw data.
+- Fields are extracted.
+- Validation is performed.
+- Language is derived from `wiki`.
 
-### مرحله‌ی ۴: از Silver به Gold
+### Step 4: Silver to Gold
 
 ```
-silver_wiki_events → [4 Materialized View] → [4 Gold Tables]
+silver_wiki_events → [4 Materialized Views] → [4 Gold Tables]
 ```
 
-- هر MV یک نوع تجمیع انجام می‌دهد.
-- داده‌ها در جداول Gold ذخیره می‌شوند.
+- Each MV performs a specific aggregation.
+- Data is stored in Gold tables.
 
-### مرحله‌ی ۵: از Gold به BI
+### Step 5: Gold to BI
 
 ```
 Gold Tables → Metabase/Grafana → Dashboards
 ```
 
-- ابزارهای BI مستقیماً از جدول‌های Gold کوئری می‌زنند.
-- چون داده تجمیعی است، کوئری‌ها بسیار سریع هستند.
+- BI tools query Gold tables directly.
+- Since data is aggregated, queries are very fast.
 
 ---
 
-## ۸. تصمیمات طراحی
+## 8. Design Decisions
 
-### تصمیم ۱: چرا `JSONAsString` و نه `JSONEachRow`؟
+### Decision 1: Why `JSONAsString` and not `JSONEachRow`?
 
-**`JSONEachRow`:** ClickHouse فیلدها را در زمان دریافت تجزیه می‌کند. اگر فیلدی از رویداد حذف شود، پیام **رد** می‌شود.
+**`JSONEachRow`:** ClickHouse parses fields at ingestion. If a field is removed from the event, the message is **rejected**.
 
-**`JSONAsString`:** کل JSON به صورت رشته ذخیره می‌شود. هر فیلدی که در آینده اضافه شود، بدون تغییر در ساختار Kafka، در دسترس است.
+**`JSONAsString`:** The entire JSON is stored as a string. Any future field added is available without changes to the Kafka schema.
 
-**تصمیم:** `JSONAsString` — چون Bronze باید ۱۰۰٪ داده را حفظ کند.
+**Decision:** `JSONAsString` — because Bronze must preserve 100% of the data.
 
-### تصمیم ۲: چرا `ReplacingMergeTree` در Silver؟
+### Decision 2: Why `ReplacingMergeTree` in Silver?
 
-Kafka ممکن است پیام‌ها را **تکراری** ارسال کند (At-Least-Once semantics). `ReplacingMergeTree` با کلید `event_id`، آخرین نسخه را نگه می‌دارد و تکراری‌ها را در پس‌زمینه ادغام می‌کند.
+Kafka may deliver messages **duplicates** (At-Least-Once semantics). `ReplacingMergeTree` with `event_id` as key keeps the latest version and merges duplicates in the background.
 
-### تصمیم ۳: چرا `PARTITION BY toYYYYMMDD` در Bronze/Silver و `toYYYYMM` در Gold؟
+### Decision 3: Why `PARTITION BY toYYYYMMDD` in Bronze/Silver and `toYYYYMM` in Gold?
 
-- **Bronze/Silver:** حجم داده زیاد است. پارتیشن‌بندی روزانه برای TTL و کوئری‌های بازه‌ای بهتر است.
-- **Gold:** حجم داده کم است. پارتیشن ماهانه تعداد پارتیشن‌ها را کم می‌کند و کوئری‌ها را سریع‌تر.
+- **Bronze/Silver:** High data volume. Daily partitioning is better for TTL and range queries.
+- **Gold:** Low data volume. Monthly partitioning reduces the number of partitions and speeds up queries.
 
-### تصمیم ۴: چرا `LowCardinality`؟
+### Decision 4: Why `LowCardinality`?
 
-`LowCardinality(String)` یک نوع داده‌ی بهینه برای رشته‌هایی است که **مقادیر تکراری زیادی** دارند:
-- `wiki`: فقط حدود ۱۰۰۰ مقدار یکتا
-- `language`: فقط حدود ۳۰۰ مقدار یکتا
-- `event_type`: فقط ۲-۳ مقدار
+`LowCardinality(String)` is an optimized data type for strings with **many duplicate values**:
+- `wiki`: only ~1000 unique values
+- `language`: only ~300 unique values
+- `event_type`: only 2-3 values
 
-ClickHouse این مقادیر را **دیکشنری** می‌کند و به جای رشته، عدد ذخیره می‌کند. صرفه‌جویی حافظه: ۵-۱۰ برابر.
+ClickHouse **dictionaries** these values and stores numbers instead of strings. Memory savings: 5-10x.
 
-### تصمیم ۵: چرا TTLهای مختلف؟
+### Decision 5: Why Different TTLs?
 
-| لایه | TTL | دلیل |
+| Layer | TTL | Reason |
 |---|---|---|
-| Bronze | ۳۰ روز | داده خام حجیم. برای دیباگ کافی است. |
-| Bronze Errors | ۷ روز | خطاها باید سریع بررسی شوند. |
-| Silver | ۹۰ روز | داده پاک‌شده، برای تحلیل‌های میان‌مدت. |
-| Gold Hourly | ۱ سال | برای روند بلندمدت. |
-| Gold Pages | ۱۸۰ روز | صفحه‌ای حجیم‌تر است. |
+| Bronze | 30 days | Raw data is bulky. Enough for debugging. |
+| Bronze Errors | 7 days | Errors should be investigated quickly. |
+| Silver | 90 days | Cleaned data for medium-term analytics. |
+| Gold Hourly | 1 year | For long-term trends. |
+| Gold Pages | 180 days | Page-level data is bulkier. |
 
-### تصمیم ۶: چرا MV به جای `INSERT INTO ... SELECT`؟
+### Decision 6: Why MV over `INSERT INTO ... SELECT`?
 
-MV **خودکار** عمل می‌کند: هر بار داده‌ی جدید به جدول منبع اضافه شود، MV آن را به جدول مقصد می‌فرستد. این باعث می‌شود:
-- نیازی به Cron Job نباشد.
-- تأخیر (Latency) کم باشد.
-- کد کمتر و خطای کمتر.
+MV **works automatically**: whenever new data is added to the source table, the MV forwards it to the target table. This means:
+- No Cron Jobs needed.
+- Low latency.
+- Less code, fewer errors.
 
-اما برای **داده‌های تاریخی**، باید یک بار `INSERT INTO ... SELECT` اجرا شود (Backfill).
+However, for **historical data**, a one-time `INSERT INTO ... SELECT` (Backfill) is needed.
 
 ---
 
-## ۹. نکات عملیاتی
+## 9. Operational Notes
 
-### ۱. هرگز مستقیماً از جدول Kafka SELECT نزنید
+### 1. Never SELECT Directly from the Kafka Table
 
 ```sql
--- ❌ اشتباه
+-- ❌ Wrong
 SELECT * FROM tutorial.wiki_events_queue;
 ```
 
-این کار **Offset را جلو می‌برد** و داده را از Materialized Viewها خارج می‌کند. برای دیباگ، از تنظیم زیر استفاده کنید:
+This **advances the Offset** and pulls data away from Materialized Views. For debugging, use:
 
 ```sql
 SET stream_like_engine_allow_direct_select = 1;
 SELECT * FROM tutorial.wiki_events_queue LIMIT 5;
 ```
 
-### ۲. مانیتور کردن Consumer Kafka
+### 2. Monitor the Kafka Consumer
 
 ```sql
 SELECT
@@ -660,7 +660,7 @@ SELECT
 FROM system.kafka_consumers;
 ```
 
-### ۳. بررسی حجم داده‌ی هر جدول
+### 3. Check Data Volume per Table
 
 ```sql
 SELECT
@@ -673,30 +673,30 @@ GROUP BY table
 ORDER BY sum(bytes_on_disk) DESC;
 ```
 
-### ۴. بهینه‌سازی رکوردهای تکراری
+### 4. Optimize Duplicate Rows
 
-`ReplacingMergeTree` در پس‌زمینه رکوردهای تکراری را ادغام می‌کند. برای ادغام فوری:
+`ReplacingMergeTree` merges duplicate rows in the background. To merge immediately:
 
 ```sql
 OPTIMIZE TABLE tutorial.silver_wiki_events FINAL;
 ```
 
-> ⚠️ این کار سنگین است. در محیط Production توصیه نمی‌شود.
+> ⚠️ This is heavy. Not recommended in Production.
 
-### ۵. Backfill دستی
+### 5. Manual Backfill
 
-اگر می‌خواهید داده‌های تاریخی Silver را دوباره به Gold بفرستید:
+If you want to resend historical Silver data to Gold:
 
 ```sql
--- ۱. پاک کردن جدول Gold
+-- 1. Truncate the Gold table
 TRUNCATE TABLE tutorial.gold_wiki_hourly_stats;
 
--- ۲. Backfill
+-- 2. Backfill
 INSERT INTO tutorial.gold_wiki_hourly_stats
 SELECT ... FROM tutorial.silver_wiki_events ...;
 ```
 
-### ۶. بررسی خطاها
+### 6. Check Errors
 
 ```sql
 SELECT
@@ -707,7 +707,7 @@ GROUP BY error_type
 ORDER BY cnt DESC;
 ```
 
-### ۷. پاک کردن داده‌های قدیمی (قبل از TTL خودکار)
+### 7. Delete Old Data (Before Auto TTL)
 
 ```sql
 ALTER TABLE tutorial.bronze_wiki_events
@@ -716,9 +716,9 @@ DELETE WHERE ingested_at < now() - INTERVAL 7 DAY;
 
 ---
 
-## ۱۰. مراجع
+## 10. References
 
-### مستندات رسمی
+### Official Documentation
 
 - [Databricks Medallion Architecture](https://www.databricks.com/glossary/medallion-architecture)
 - [ClickHouse Kafka Engine](https://clickhouse.com/docs/en/engines/table-engines/integrations/kafka)
@@ -726,34 +726,34 @@ DELETE WHERE ingested_at < now() - INTERVAL 7 DAY;
 - [ClickHouse Materialized View](https://clickhouse.com/docs/en/sql-reference/statements/create/view#materialized-view)
 - [Kafka Documentation](https://kafka.apache.org/documentation/)
 
-### مقالات مرتبط
+### Related Articles
 
 - [Building a Data Lakehouse with Medallion Architecture](https://www.databricks.com/blog/2021/08/30/building-a-data-lakehouse-with-medallion-architecture.html)
 - [Streaming Data into ClickHouse with Kafka](https://clickhouse.com/blog/clickhouse-kafka-engine-tutorial)
 
-### پروژه‌های مشابه
+### Similar Projects
 
 - [ClickHouse Kafka Examples](https://github.com/ClickHouse/clickhouse-kafka-examples)
 - [Kafka Connect ClickHouse Sink](https://github.com/ClickHouse/clickhouse-kafka-connect)
 
 ---
 
-## پیوست: چک‌لیست راه‌اندازی سریع
+## Appendix: Quick Setup Checklist
 
-- [ ] راه‌اندازی زیرساخت با `docker compose up -d`
-- [ ] ساخت تاپیک `wiki-events` در Kafka
-- [ ] اجرای `sql/01-bronze-layer.sql`
-- [ ] اجرای `sql/02-silver-layer.sql`
-- [ ] اجرای `sql/03-gold-layer.sql`
-- [ ] اجرای Producer (`python producer.py`)
-- [ ] بررسی `SELECT count() FROM tutorial.bronze_wiki_events`
-- [ ] بررسی `SELECT count() FROM tutorial.silver_wiki_events`
-- [ ] بررسی `SELECT count() FROM tutorial.gold_wiki_hourly_stats`
-- [ ] اجرای کوئری‌های تحلیلی Gold
-- [ ] اتصال Metabase به ClickHouse
+- [ ] Bring up infrastructure with `docker compose up -d`
+- [ ] Create `wiki-events` topic in Kafka
+- [ ] Run `sql/01-bronze-layer.sql`
+- [ ] Run `sql/02-silver-layer.sql`
+- [ ] Run `sql/03-gold-layer.sql`
+- [ ] Run the Producer (`python producer.py`)
+- [ ] Check `SELECT count() FROM tutorial.bronze_wiki_events`
+- [ ] Check `SELECT count() FROM tutorial.silver_wiki_events`
+- [ ] Check `SELECT count() FROM tutorial.gold_wiki_hourly_stats`
+- [ ] Run Gold analytical queries
+- [ ] Connect Metabase to ClickHouse
 
 ---
 
-## مجوز
+## License
 
-این مستند بخشی از پروژه [stream-realtime-data](https://github.com/YOUR-USERNAME/stream-realtime-data) است.
+This document is part of the [stream-realtime-data](https://github.com/YOUR-USERNAME/stream-realtime-data) project.

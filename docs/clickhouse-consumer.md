@@ -1,40 +1,40 @@
 # ClickHouse as a Stream Consumer
 
-سندی جامع درباره‌ی استفاده از ClickHouse به عنوان مصرف‌کننده (Consumer) جریان داده در خط لوله‌ی Kafka → ClickHouse.
+A comprehensive guide on using ClickHouse as a data stream consumer in a Kafka → ClickHouse pipeline.
 
-**نسخه:** 1.0.0
-**آخرین به‌روزرسانی:** 2026-10-06
-**نسخه‌ی ClickHouse:** 24.8
-**نسخه‌ی Kafka:** 3.7 (KRaft mode)
-
----
-
-## فهرست مطالب
-
-1. [معرفی معماری](#۱-معرفی-معماری)
-2. [چرا ClickHouse به عنوان Consumer؟](#۲-چرا-clickhouse-به-عنوان-consumer)
-3. [الگوی پنج‌جدولی](#۳-الگوی-پنججدولی)
-4. [پیش‌نیازها](#۴-پیشنیازها)
-5. [راه‌اندازی زیرساخت](#۵-راهاندازی-زیرساخت)
-6. [اتصال به شبکه Kafka](#۶-اتصال-به-شبکه-kafka)
-7. [ساختار جداول](#۷-ساختار-جداول)
-8. [تنظیمات Kafka Engine](#۸-تنظیمات-kafka-engine)
-9. [مدیریت خطا](#۹-مدیریت-خطا)
-10. [مدیریت دسترسی کاربران](#۱۰-مدیریت-دسترسی-کاربران)
-11. [مثال‌های تحلیلی](#۱۱-مثالهای-تحلیلی)
-12. [دیباگ و مانیتورینگ](#۱۲-دیباگ-و-مانیتورینگ)
-13. [بهینه‌سازی و مقیاس‌پذیری](#۱۳-بهینهسازی-و-مقیاسپذیری)
-14. [خطاهای رایج و راه‌حل‌ها](#۱۴-خطاهای-رایج-و-راهحلها)
-15. [نکات عملیاتی](#۱۵-نکات-عملیاتی)
-16. [مراجع](#۱۶-مراجع)
+**Version:** 1.0.0
+**Last Updated:** 2026-10-06
+**ClickHouse Version:** 24.8
+**Kafka Version:** 3.7 (KRaft mode)
 
 ---
 
-## ۱. معرفی معماری
+## Table of Contents
 
-در این پروژه، ClickHouse نقش **Consumer** را در یک معماری رویدادمحور (Event-Driven) ایفا می‌کند. داده‌ها از منبع زنده‌ی ویکی‌مدیا توسط Producer پایتون به Kafka ارسال می‌شوند و ClickHouse مستقیماً و بدون واسطه آن‌ها را می‌خواند و در جداول بهینه ذخیره می‌کند.
+1. [Architecture Overview](#1-architecture-overview)
+2. [Why ClickHouse as a Consumer?](#2-why-clickhouse-as-a-consumer)
+3. [The Five-Table Pattern](#3-the-five-table-pattern)
+4. [Prerequisites](#4-prerequisites)
+5. [Infrastructure Setup](#5-infrastructure-setup)
+6. [Connecting to the Kafka Network](#6-connecting-to-the-kafka-network)
+7. [Table Structure](#7-table-structure)
+8. [Kafka Engine Settings](#8-kafka-engine-settings)
+9. [Error Handling](#9-error-handling)
+10. [User Access Management](#10-user-access-management)
+11. [Analytical Examples](#11-analytical-examples)
+12. [Debugging and Monitoring](#12-debugging-and-monitoring)
+13. [Optimization and Scalability](#13-optimization-and-scalability)
+14. [Common Errors and Solutions](#14-common-errors-and-solutions)
+15. [Operational Notes](#15-operational-notes)
+16. [References](#16-references)
 
-### نمودار معماری
+---
+
+## 1. Architecture Overview
+
+In this project, ClickHouse plays the role of **Consumer** in an event-driven architecture. Data flows from the live Wikimedia source to Kafka via a Python Producer, and ClickHouse reads it directly without any middleware, storing it in optimized tables.
+
+### Architecture Diagram
 
 ```
 ┌──────────────────┐     ┌─────────────────┐     ┌──────────────────────────┐
@@ -63,45 +63,45 @@
                                                    └────────────────────┘
 ```
 
-### جریان داده‌ی گام‌به‌گام
+### Step-by-Step Data Flow
 
-1. **Producer** به جریان SSE ویکی‌مدیا وصل می‌شود.
-2. رویدادها به JSON تبدیل و به تاپیک `wiki-events` در Kafka ارسال می‌شوند.
-3. **جدول Kafka Engine** در ClickHouse به صورت خودکار این پیام‌ها را می‌خواند.
-4. **Materialized View اصلی** پیام‌های سالم را به جدول `wiki_events` منتقل می‌کند.
-5. **Materialized View خطاها** پیام‌های خراب را به جدول `wiki_events_errors` منتقل می‌کند.
-6. ابزارهای BI (مثل DBeaver) روی جدول `wiki_events` کوئری می‌زنند.
+1. **Producer** connects to the Wikimedia SSE stream.
+2. Events are converted to JSON and sent to the `wiki-events` topic in Kafka.
+3. The **Kafka Engine table** in ClickHouse automatically reads these messages.
+4. The **main Materialized View** moves healthy messages to the `wiki_events` table.
+5. The **error Materialized View** moves broken messages to the `wiki_events_errors` table.
+6. BI tools (like DBeaver) query the `wiki_events` table.
 
 ---
 
-## ۲. چرا ClickHouse به عنوان Consumer؟
+## 2. Why ClickHouse as a Consumer?
 
-ClickHouse با موتور **Kafka Engine** این امکان را فراهم می‌کند که مستقیماً به Kafka متصل شود و داده را جریانی بخواند. مزایا:
+ClickHouse with the **Kafka Engine** can connect directly to Kafka and read data as a stream. Benefits:
 
-| مزیت | توضیح |
+| Benefit | Description |
 |---|---|
-| **بدون کد واسط** | نیازی به Consumer سفارشی در Python/Java نیست. |
-| **Throughput بالا** | قادر است میلیون‌ها رویداد در ثانیه را مصرف کند. |
-| **ذخیره‌سازی ستونی** | داده‌ها در قالب فشرده و بهینه برای تحلیل ذخیره می‌شوند. |
-| **مدیریت خطای داخلی** | پیام‌های خراب به جدول جداگانه می‌روند و جریان متوقف نمی‌شود. |
-| **یکپارچگی با SQL** | کوئری‌های تحلیلی با SQL استاندارد و بسیار سریع. |
-| **مقیاس‌پذیری افقی** | با افزایش پارتیشن و Consumer، Throughput بالا می‌رود. |
+| **No Middleware** | No need for a custom Consumer in Python/Java. |
+| **High Throughput** | Can consume millions of events per second. |
+| **Columnar Storage** | Data is stored compressed and optimized for analytics. |
+| **Built-in Error Handling** | Broken messages go to a separate table and the stream doesn't stop. |
+| **SQL Integration** | Fast, standard-SQL analytical queries. |
+| **Horizontal Scalability** | Throughput scales with partitions and consumers. |
 
 ---
 
-## ۳. الگوی پنج‌جدولی
+## 3. The Five-Table Pattern
 
-ClickHouse برای مصرف Kafka با مدیریت خطا از **الگوی پنج‌جدولی** استفاده می‌کند. هر جدول نقش مشخصی دارد:
+ClickHouse uses the **Five-Table Pattern** for consuming Kafka with error handling. Each table has a specific role:
 
-| جدول | موتور | نقش |
+| Table | Engine | Role |
 |---|---|---|
-| `wiki_events_queue` | `Kafka` | رابط اتصال به Kafka. داده را می‌خواند اما ذخیره نمی‌کند. |
-| `wiki_events_mv` | `Materialized View` | پیام‌های سالم (`_error=''`) را به جدول اصلی منتقل می‌کند. |
-| `wiki_events` | `MergeTree` | ذخیره‌سازی دائمی داده‌های سالم. |
-| `wiki_events_errors_mv` | `Materialized View` | پیام‌های خطادار (`_error!=''`) را به جدول خطا منتقل می‌کند. |
-| `wiki_events_errors` | `MergeTree` | ذخیره‌سازی پیام‌های خراب برای بررسی و دیباگ. |
+| `wiki_events_queue` | `Kafka` | Kafka connection interface. Reads data but doesn't store it. |
+| `wiki_events_mv` | `Materialized View` | Moves healthy messages (`_error=''`) to the main table. |
+| `wiki_events` | `MergeTree` | Persistent storage for healthy data. |
+| `wiki_events_errors_mv` | `Materialized View` | Moves erroneous messages (`_error!=''`) to the error table. |
+| `wiki_events_errors` | `MergeTree` | Persistent storage for broken messages for review and debugging. |
 
-### جریان داده
+### Data Flow
 
 ```
 Kafka Topic → wiki_events_queue
@@ -109,27 +109,27 @@ Kafka Topic → wiki_events_queue
                    └── _error!='' → wiki_events_errors_mv → wiki_events_errors
 ```
 
-> ⚠️ **نکته حیاتی:** هرگز مستقیماً از `wiki_events_queue` کوئری نگیرید، چون Offset را جلو می‌برد و داده را از دسترس Materialized Viewها خارج می‌کند.
+> ⚠️ **Critical note:** Never query `wiki_events_queue` directly — it advances the Offset and pulls data away from the Materialized Views.
 
 ---
 
-## ۴. پیش‌نیازها
+## 4. Prerequisites
 
-| ابزار | نسخه پیشنهادی | کاربرد |
+| Tool | Recommended Version | Purpose |
 |---|---|---|
-| Docker | 24.0+ | اجرای کانتینرها |
-| Docker Compose | 2.20+ | مدیریت سرویس‌ها |
-| Kafka | 3.7+ | پیام‌رسان |
-| ClickHouse | 24.8+ | Consumer و ذخیره‌سازی |
-| Python | 3.10+ | اجرای Producer |
-| DBeaver | 23.0+ | کوئری و تحلیل |
-| Git Bash / WSL | - | اجرای دستورات در ویندوز |
+| Docker | 24.0+ | Run containers |
+| Docker Compose | 2.20+ | Manage services |
+| Kafka | 3.7+ | Message broker |
+| ClickHouse | 24.8+ | Consumer and storage |
+| Python | 3.10+ | Run the Producer |
+| DBeaver | 23.0+ | Queries and analytics |
+| Git Bash / WSL | - | Run commands on Windows |
 
 ---
 
-## ۵. راه‌اندازی زیرساخت
+## 5. Infrastructure Setup
 
-### ۵.۱. Docker Compose
+### 5.1. Docker Compose
 
 ```yaml
 services:
@@ -198,7 +198,7 @@ networks:
     name: service_network
 ```
 
-### ۵.۲. Docker Run (جایگزین)
+### 5.2. Docker Run (Alternative)
 
 ```bash
 docker run -d \
@@ -212,13 +212,13 @@ docker run -d \
   clickhouse/clickhouse-server:24.8
 ```
 
-### ۵.۳. دسترسی به کلاینت
+### 5.3. Client Access
 
 ```bash
 docker exec -it clickhouse clickhouse-client
 ```
 
-یا با کاربر خاص:
+Or with a specific user:
 
 ```bash
 docker exec -it clickhouse clickhouse-client --user default --password ""
@@ -226,45 +226,45 @@ docker exec -it clickhouse clickhouse-client --user default --password ""
 
 ---
 
-## ۶. اتصال به شبکه Kafka
+## 6. Connecting to the Kafka Network
 
-اگر ClickHouse و Kafka در یک شبکه Docker نباشند، ClickHouse نمی‌تواند نام `kafka-broker` را resolve کند و خطای `DNS resolution failed` می‌دهد.
+If ClickHouse and Kafka are not on the same Docker network, ClickHouse cannot resolve the name `kafka-broker` and will fail with a `DNS resolution failed` error.
 
-### گام‌های اتصال
+### Connection Steps
 
 ```bash
-# ۱. نام شبکه Kafka را پیدا کنید
+# 1. Find the Kafka network name
 docker inspect kafka-broker --format "{{json .NetworkSettings.Networks}}"
 
-# ۲. ClickHouse را به آن شبکه وصل کنید
+# 2. Connect ClickHouse to that network
 docker network connect kafka-lab_default clickhouse
 
-# ۳. ClickHouse را ری‌استارت کنید
+# 3. Restart ClickHouse
 docker restart clickhouse
 
-# ۴. تایید DNS
+# 4. Verify DNS
 docker exec -it clickhouse getent hosts kafka-broker
 ```
 
-### خروجی مورد انتظار
+### Expected Output
 
 ```
 172.20.0.2      kafka-broker
 ```
 
-### بررسی شبکه‌های ClickHouse
+### Verify ClickHouse Networks
 
 ```bash
 docker inspect clickhouse --format "{{json .NetworkSettings.Networks}}"
 ```
 
-باید دو شبکه را ببینید: شبکه اصلی خودش و شبکه Kafka.
+You should see two networks: its own and Kafka's.
 
 ---
 
-## ۷. ساختار جداول
+## 7. Table Structure
 
-### ۷.۱. جدول Kafka Engine (رابط دریافت با مدیریت خطا)
+### 7.1. Kafka Engine Table (Ingestion Interface with Error Handling)
 
 ```sql
 CREATE TABLE IF NOT EXISTS tutorial.wiki_events_queue (
@@ -283,9 +283,9 @@ SETTINGS
     kafka_handle_error_mode = 'stream';
 ```
 
-> 📌 **مهم:** تنظیم `kafka_handle_error_mode = 'stream'` دو ستون مجازی `_error` و `_raw_message` را در دسترس Materialized Viewها قرار می‌دهد.
+> 📌 **Important:** `kafka_handle_error_mode = 'stream'` exposes two virtual columns, `_error` and `_raw_message`, to Materialized Views.
 
-### ۷.۲. جدول MergeTree (ذخیره داده‌های سالم)
+### 7.2. MergeTree Table (Healthy Data Storage)
 
 ```sql
 CREATE TABLE IF NOT EXISTS tutorial.wiki_events (
@@ -300,7 +300,7 @@ PARTITION BY toYYYYMM(timestamp)
 ORDER BY (timestamp, title);
 ```
 
-### ۷.۳. Materialized View اصلی (انتقال داده‌های سالم)
+### 7.3. Main Materialized View (Healthy Data Transfer)
 
 ```sql
 CREATE MATERIALIZED VIEW IF NOT EXISTS tutorial.wiki_events_mv
@@ -315,7 +315,7 @@ FROM tutorial.wiki_events_queue
 WHERE length(_error) = 0;
 ```
 
-### ۷.۴. جدول خطاها (ذخیره پیام‌های خراب)
+### 7.4. Errors Table (Broken Message Storage)
 
 ```sql
 CREATE TABLE IF NOT EXISTS tutorial.wiki_events_errors (
@@ -329,7 +329,7 @@ CREATE TABLE IF NOT EXISTS tutorial.wiki_events_errors (
 ORDER BY (ingested_at, _topic, _partition, _offset);
 ```
 
-### ۷.۵. Materialized View خطاها
+### 7.5. Errors Materialized View
 
 ```sql
 CREATE MATERIALIZED VIEW IF NOT EXISTS tutorial.wiki_events_errors_mv
@@ -345,13 +345,13 @@ FROM tutorial.wiki_events_queue
 WHERE length(_error) > 0;
 ```
 
-### ۷.۶. بررسی صحت ساختار
+### 7.6. Verify Structure
 
 ```sql
 SHOW TABLES FROM tutorial;
 ```
 
-**خروجی مورد انتظار:**
+**Expected output:**
 
 ```
 wiki_events
@@ -361,11 +361,11 @@ wiki_events_mv
 wiki_events_queue
 ```
 
-### ۷.۷. ذخیره در فایل init (اختیاری)
+### 7.7. Save as Init File (Optional)
 
-می‌توانید همه دستورات بالا را در `init-db/001-schema.sql` قرار دهید تا در اولین اجرای ClickHouse به طور خودکار اجرا شوند.
+You can place all the commands above in `init-db/001-schema.sql` so they run automatically on the first ClickHouse launch.
 
-> ⚠️ **توجه:** ClickHouse فقط **یک بار** (وقتی volume خالی است) اسکریپت‌های init را اجرا می‌کند. برای اجرای مجدد:
+> ⚠️ **Note:** ClickHouse runs init scripts only **once** (when the volume is empty). To run them again:
 > ```bash
 > docker compose down -v
 > docker compose up -d
@@ -373,25 +373,25 @@ wiki_events_queue
 
 ---
 
-## ۸. تنظیمات Kafka Engine
+## 8. Kafka Engine Settings
 
-### جدول کامل تنظیمات
+### Full Settings Table
 
-| تنظیم | مقدار پیشنهادی | توضیح |
+| Setting | Recommended Value | Description |
 |---|---|---|
-| `kafka_broker_list` | `kafka-broker:29092` | آدرس Kafka. داخل Docker از نام سرویس استفاده می‌کنیم. |
-| `kafka_topic_list` | `wiki-events` | نام تاپیک. |
+| `kafka_broker_list` | `kafka-broker:29092` | Kafka address. Inside Docker we use the service name. |
+| `kafka_topic_list` | `wiki-events` | Topic name. |
 | `kafka_group_name` | `clickhouse-consumer-group` | Consumer Group. |
-| `kafka_format` | `JSONEachRow` | فرمت داده ورودی. |
-| `kafka_num_consumers` | `1` | تعداد Consumerهای موازی. |
-| `kafka_handle_error_mode` | `stream` | مدیریت خطا در جریان. |
-| `kafka_skip_broken_messages` | `10` | (اختیاری) تعداد پیام نامعتبر قبل از خطا. |
-| `kafka_max_block_size` | `65536` | (اختیاری) حداکثر پیام در هر batch. |
-| `kafka_poll_max_batch_size` | `1000` | (اختیاری) حداکثر پیام در هر poll. |
-| `kafka_poll_timeout_ms` | `500` | (اختیاری) زمان انتظار برای poll. |
-| `kafka_flush_interval_ms` | `7500` | (اختیاری) بازه flush خودکار. |
+| `kafka_format` | `JSONEachRow` | Input data format. |
+| `kafka_num_consumers` | `1` | Number of parallel consumers. |
+| `kafka_handle_error_mode` | `stream` | Streaming error handling. |
+| `kafka_skip_broken_messages` | `10` | (Optional) Invalid messages before failure. |
+| `kafka_max_block_size` | `65536` | (Optional) Max messages per batch. |
+| `kafka_poll_max_batch_size` | `1000` | (Optional) Max messages per poll. |
+| `kafka_poll_timeout_ms` | `500` | (Optional) Poll wait time. |
+| `kafka_flush_interval_ms` | `7500` | (Optional) Auto flush interval. |
 
-### نمونه پیکربندی پیشرفته
+### Advanced Configuration Example
 
 ```sql
 CREATE TABLE IF NOT EXISTS tutorial.wiki_events_queue (
@@ -414,66 +414,66 @@ SETTINGS
     kafka_poll_timeout_ms = 500;
 ```
 
-### ⚠️ محدودیت مهم: تغییر تنظیمات با ALTER
+### ⚠️ Important Limitation: ALTER Settings
 
-**موتور Kafka از `ALTER TABLE ... MODIFY SETTING` پشتیبانی نمی‌کند.** اگر بخواهید تنظیمی را تغییر دهید، باید جدول را **حذف و بازسازی** کنید:
+**The Kafka engine does not support `ALTER TABLE ... MODIFY SETTING`.** To change a setting, you must **drop and recreate** the table:
 
 ```sql
--- ۱. حذف MVهای وابسته
+-- 1. Drop dependent MVs
 DROP VIEW IF EXISTS tutorial.wiki_events_mv;
 DROP VIEW IF EXISTS tutorial.wiki_events_errors_mv;
 
--- ۲. حذف جدول Kafka
+-- 2. Drop the Kafka table
 DROP TABLE IF EXISTS tutorial.wiki_events_queue;
 
--- ۳. بازسازی با تنظیمات جدید
+-- 3. Recreate with new settings
 CREATE TABLE tutorial.wiki_events_queue (...) ENGINE = Kafka SETTINGS ...;
 
--- ۴. بازسازی MVها
+-- 4. Recreate MVs
 CREATE MATERIALIZED VIEW tutorial.wiki_events_mv ...;
 CREATE MATERIALIZED VIEW tutorial.wiki_events_errors_mv ...;
 ```
 
-> ✅ **نکته:** چون جدول Kafka داده ذخیره نمی‌کند، حذف و بازسازی آن **داده‌ای از دست نمی‌دهد**. فقط ممکن است چند ثانیه داده در حین بازسازی از دست برود.
+> ✅ **Note:** Since the Kafka table doesn't store data, dropping and recreating it **loses no data**. Only a few seconds of data may be lost during the rebuild.
 
 ---
 
-## ۹. مدیریت خطا
+## 9. Error Handling
 
-### چرا مدیریت خطا مهم است؟
+### Why Error Handling Matters
 
-در جریان داده، همیشه احتمال دارد پیام‌های خراب یا ناسازگار وارد شوند. دلایل رایج:
+In a stream, there's always a chance of broken or incompatible messages. Common causes:
 
-- **قطع اتصال نیمه‌کاره:** پیام ناقص JSON.
-- **فیلد گمشده:** رویدادهایی با ساختار متفاوت.
-- **نوع داده اشتباه:** مثلاً `bot` به جای عدد، رشته.
-- **پیام‌های خیلی بزرگ:** بیشتر از حد مجاز.
+- **Partial connection:** Incomplete JSON.
+- **Missing fields:** Events with different structure.
+- **Wrong data types:** E.g., `bot` is a string instead of a number.
+- **Oversized messages:** Beyond the size limit.
 
-بدون مدیریت خطا، **کل Consumer متوقف می‌شود** و پایپ‌لاین از کار می‌افتد.
+Without error handling, **the entire Consumer halts** and the pipeline breaks.
 
-### حالت‌های `kafka_handle_error_mode`
+### `kafka_handle_error_mode` Modes
 
-| حالت | رفتار | توصیه |
+| Mode | Behavior | Recommendation |
 |---|---|---|
-| `default` | در صورت خطا، کل مصرف‌کننده متوقف می‌شود. | ❌ توصیه نمی‌شود |
-| `stream` | خطاها در ستون مجازی `_error` قرار می‌گیرند و جریان ادامه می‌یابد. | ✅ توصیه‌شده |
-| `dead_letter_queue` | (فقط ClickHouse 25.8+) پیام‌های خراب به `system.dead_letter_queue` می‌روند. | ⭐ گزینه پیشرفته |
+| `default` | On error, the entire consumer halts. | ❌ Not recommended |
+| `stream` | Errors go to virtual `_error` column and the stream continues. | ✅ Recommended |
+| `dead_letter_queue` | (Only ClickHouse 25.8+) Broken messages go to `system.dead_letter_queue`. | ⭐ Advanced option |
 
-### ستون‌های مجازی
+### Virtual Columns
 
-وقتی `kafka_handle_error_mode = 'stream'` فعال باشد، این ستون‌ها به طور خودکار در دسترس هستند:
+When `kafka_handle_error_mode = 'stream'` is enabled, these columns are available automatically:
 
-| ستون | نوع | توضیح |
+| Column | Type | Description |
 |---|---|---|
-| `_error` | `String` | متن خطا. اگر پیام سالم باشد، خالی است. |
-| `_raw_message` | `String` | پیام خام Kafka (بدون تجزیه). |
-| `_topic` | `String` | نام تاپیک. |
-| `_partition` | `UInt64` | شماره پارتیشن. |
-| `_offset` | `UInt64` | Offset پیام. |
-| `_key` | `String` | کلید پیام. |
-| `_timestamp` | `Nullable(DateTime)` | زمان ثبت در Kafka. |
+| `_error` | `String` | Error text. Empty if the message is healthy. |
+| `_raw_message` | `String` | Raw Kafka message (unparsed). |
+| `_topic` | `String` | Topic name. |
+| `_partition` | `UInt64` | Partition number. |
+| `_offset` | `UInt64` | Message offset. |
+| `_key` | `String` | Message key. |
+| `_timestamp` | `Nullable(DateTime)` | Kafka ingestion time. |
 
-### بررسی خطاهای ثبت‌شده
+### Check Recorded Errors
 
 ```sql
 SELECT
@@ -488,7 +488,7 @@ ORDER BY ingested_at DESC
 LIMIT 10;
 ```
 
-### گروه‌بندی خطاها بر اساس نوع
+### Group Errors by Type
 
 ```sql
 SELECT
@@ -499,7 +499,7 @@ GROUP BY error_type
 ORDER BY cnt DESC;
 ```
 
-### نمودار زمانی خطاها (۲۴ ساعت اخیر)
+### Error Trend Chart (Last 24 Hours)
 
 ```sql
 SELECT
@@ -511,16 +511,16 @@ GROUP BY hour
 ORDER BY hour DESC;
 ```
 
-### TTL برای جدول خطاها
+### TTL for the Errors Table
 
-برای جلوگیری از اشغال فضا توسط پیام‌های خراب قدیمی:
+To prevent space being taken up by old broken messages:
 
 ```sql
 ALTER TABLE tutorial.wiki_events_errors
 MODIFY TTL ingested_at + INTERVAL 7 DAY;
 ```
 
-### پاک‌سازی دستی خطاها
+### Manual Error Cleanup
 
 ```sql
 TRUNCATE TABLE tutorial.wiki_events_errors;
@@ -528,17 +528,17 @@ TRUNCATE TABLE tutorial.wiki_events_errors;
 
 ---
 
-## ۱۰. مدیریت دسترسی کاربران
+## 10. User Access Management
 
-### چرا کاربر جدید؟
+### Why a New User?
 
-کاربر `default` در ClickHouse از فایل `users.xml` استفاده می‌کند که **فقط خواندنی** است. اگر بخواهید رمز برای آن تعیین کنید، با خطای `ACCESS_STORAGE_READONLY` مواجه می‌شوید.
+The `default` user in ClickHouse uses `users.xml`, which is **read-only**. If you try to set a password, you'll get an `ACCESS_STORAGE_READONLY` error.
 
-### راه‌حل: ساخت کاربر جدید
+### Solution: Create a New User
 
-**گام ۱: فعال‌سازی `access_management` برای `default`**
+**Step 1: Enable `access_management` for `default`**
 
-فایل `default-access.xml` را در `users.d` بسازید:
+Create `default-access.xml` in `users.d`:
 
 ```bash
 docker exec -it clickhouse bash -c "cat > /etc/clickhouse-server/users.d/default-access.xml << 'EOF'
@@ -553,46 +553,46 @@ docker exec -it clickhouse bash -c "cat > /etc/clickhouse-server/users.d/default
 EOF"
 ```
 
-**گام ۲: ری‌استارت ClickHouse**
+**Step 2: Restart ClickHouse**
 
 ```bash
 docker restart clickhouse
 ```
 
-**گام ۳: ساخت کاربر جدید**
+**Step 3: Create a New User**
 
 ```bash
 docker exec -it clickhouse clickhouse-client --query "CREATE USER dbeaver_user IDENTIFIED WITH plaintext_password BY 'dbeaver123'"
 ```
 
-**گام ۴: اعطای دسترسی‌ها**
+**Step 4: Grant Privileges**
 
 ```bash
 docker exec -it clickhouse clickhouse-client --query "GRANT CURRENT GRANTS ON *.* TO dbeaver_user WITH GRANT OPTION"
 ```
 
-> 📌 **نکته:** اگر `GRANT ALL` با خطای `Not enough privileges` مواجه شد، از `GRANT CURRENT GRANTS` استفاده کنید. این دستور تمام دسترسی‌های کاربر `default` را منتقل می‌کند.
+> 📌 **Note:** If `GRANT ALL` fails with `Not enough privileges`, use `GRANT CURRENT GRANTS`. This command transfers all of `default`'s privileges.
 
-**گام ۵: تایید دسترسی‌ها**
+**Step 5: Verify Privileges**
 
 ```sql
 SHOW GRANTS FOR dbeaver_user;
 ```
 
-**گام ۶: تست از CLI**
+**Step 6: Test from CLI**
 
 ```bash
 docker exec -it clickhouse clickhouse-client --user dbeaver_user --password dbeaver123 --query "SELECT currentUser()"
 ```
 
-**خروجی مورد انتظار:**
+**Expected output:**
 ```
 dbeaver_user
 ```
 
-### اتصال از DBeaver
+### Connecting from DBeaver
 
-| فیلد | مقدار |
+| Field | Value |
 |---|---|
 | **Host** | `localhost` |
 | **Port** | `8123` |
@@ -600,9 +600,9 @@ dbeaver_user
 | **User** | `dbeaver_user` |
 | **Password** | `dbeaver123` |
 
-### تنظیم رمز برای کاربر `default` (اختیاری)
+### Set Password for `default` (Optional)
 
-حالا که `access_management` فعال است:
+Now that `access_management` is enabled:
 
 ```bash
 docker exec -it clickhouse clickhouse-client --query "ALTER USER default IDENTIFIED WITH plaintext_password BY 'tutorial123'"
@@ -610,15 +610,15 @@ docker exec -it clickhouse clickhouse-client --query "ALTER USER default IDENTIF
 
 ---
 
-## ۱۱. مثال‌های تحلیلی
+## 11. Analytical Examples
 
-### تعداد کل رویدادها
+### Total Events
 
 ```sql
 SELECT count() AS total_events FROM tutorial.wiki_events;
 ```
 
-### پرکارترین کاربران
+### Top Users
 
 ```sql
 SELECT user, count() AS edits
@@ -628,7 +628,7 @@ ORDER BY edits DESC
 LIMIT 10;
 ```
 
-### نسبت ربات‌ها به انسان‌ها
+### Bot-to-Human Ratio
 
 ```sql
 SELECT
@@ -639,7 +639,7 @@ FROM tutorial.wiki_events
 GROUP BY bot;
 ```
 
-### پرجنب‌وجوش‌ترین صفحات
+### Most Edited Pages
 
 ```sql
 SELECT title, count() AS edits
@@ -649,7 +649,7 @@ ORDER BY edits DESC
 LIMIT 10;
 ```
 
-### نمودار زمانی فعالیت (به تفکیک دقیقه)
+### Activity Time Chart (Per Minute)
 
 ```sql
 SELECT
@@ -661,7 +661,7 @@ ORDER BY minute DESC
 LIMIT 20;
 ```
 
-### کاربران ثبت‌نام‌شده (بدون IP)
+### Registered Users (Without IP)
 
 ```sql
 SELECT user, count() AS edits
@@ -672,7 +672,7 @@ ORDER BY edits DESC
 LIMIT 10;
 ```
 
-### کاربرانی که فقط ویرایش‌های رباتیک دارند
+### Users with Only Bot Edits
 
 ```sql
 SELECT user, count() AS edits
@@ -683,7 +683,7 @@ ORDER BY edits DESC
 LIMIT 5;
 ```
 
-### نرخ ورود داده (Events per Second)
+### Ingestion Rate (Events per Second)
 
 ```sql
 SELECT
@@ -695,7 +695,7 @@ GROUP BY second
 ORDER BY second DESC;
 ```
 
-### تأخیر پردازش (زمان بین رویداد و ورود به ClickHouse)
+### Processing Latency (Event Time to Ingestion)
 
 ```sql
 SELECT
@@ -707,21 +707,21 @@ WHERE ingested_at > now() - INTERVAL 5 MINUTE;
 
 ---
 
-## ۱۲. دیباگ و مانیتورینگ
+## 12. Debugging and Monitoring
 
-### مشاهده لاگ ClickHouse
+### View ClickHouse Logs
 
 ```bash
 docker logs clickhouse --tail 50
 ```
 
-### مشاهده لاگ خطاهای ClickHouse
+### View ClickHouse Error Logs
 
 ```bash
 docker exec -it clickhouse tail -50 /var/log/clickhouse-server/clickhouse-server.err.log
 ```
 
-### وضعیت Kafka Consumers
+### Kafka Consumer Status
 
 ```sql
 SELECT
@@ -735,13 +735,13 @@ SELECT
 FROM system.kafka_consumers;
 ```
 
-**ستون‌های مهم:**
-- `assignments`: پارتیشن‌های تخصیص‌یافته
-- `last_poll_time`: آخرین زمان poll
-- `num_messages_read`: تعداد پیام‌های خوانده‌شده
-- `last_exception`: آخرین استثنا (در صورت وجود)
+**Important columns:**
+- `assignments`: Assigned partitions
+- `last_poll_time`: Last poll time
+- `num_messages_read`: Number of messages read
+- `last_exception`: Last exception (if any)
 
-### بررسی Lag مصرف‌کننده
+### Check Consumer Lag
 
 ```sql
 SELECT
@@ -754,7 +754,7 @@ SELECT
 FROM system.kafka_consumers;
 ```
 
-### بررسی سلامت MVها
+### Check MV Health
 
 ```sql
 SELECT
@@ -765,16 +765,16 @@ SELECT
 FROM system.view_refreshes;
 ```
 
-### خواندن مستقیم از جدول Kafka (فقط برای دیباگ)
+### Direct Read from Kafka Table (Debug Only)
 
 ```sql
 SET stream_like_engine_allow_direct_select = 1;
 SELECT * FROM tutorial.wiki_events_queue LIMIT 5;
 ```
 
-> ⚠️ **هشدار:** این کار Offset را جلو می‌برد و داده را از MVها خارج می‌کند. فقط در محیط توسعه استفاده کنید.
+> ⚠️ **Warning:** This advances the Offset and pulls data away from MVs. Development use only.
 
-### آمار جدول‌ها
+### Table Statistics
 
 ```sql
 SELECT
@@ -788,21 +788,21 @@ GROUP BY table;
 
 ---
 
-## ۱۳. بهینه‌سازی و مقیاس‌پذیری
+## 13. Optimization and Scalability
 
-### افزایش تعداد Consumer
+### Increase the Number of Consumers
 
-اگر تاپیک چند پارتیشن دارد، تعداد Consumer را افزایش دهید. **نیاز به بازسازی جدول دارد:**
+If the topic has multiple partitions, increase the number of consumers. **Requires rebuilding the table:**
 
 ```sql
--- ۱. حذف MVهای وابسته
+-- 1. Drop dependent MVs
 DROP VIEW IF EXISTS tutorial.wiki_events_mv;
 DROP VIEW IF EXISTS tutorial.wiki_events_errors_mv;
 
--- ۲. حذف جدول Kafka
+-- 2. Drop the Kafka table
 DROP TABLE IF EXISTS tutorial.wiki_events_queue;
 
--- ۳. بازسازی با Consumer بیشتر
+-- 3. Rebuild with more consumers
 CREATE TABLE tutorial.wiki_events_queue (...)
 ENGINE = Kafka
 SETTINGS
@@ -810,32 +810,32 @@ SETTINGS
     kafka_num_consumers = 3,
     kafka_handle_error_mode = 'stream';
 
--- ۴. بازسازی MVها
+-- 4. Rebuild MVs
 CREATE MATERIALIZED VIEW tutorial.wiki_events_mv ...;
 CREATE MATERIALIZED VIEW tutorial.wiki_events_errors_mv ...;
 ```
 
-> 📌 **قانون:** تعداد Consumer نباید از تعداد پارتیشن‌ها بیشتر باشد.
+> 📌 **Rule:** Number of consumers should not exceed the number of partitions.
 
-### تغییر Ordering Key
+### Change the Ordering Key
 
-اگر کوئری‌ها بیشتر بر اساس `user` است:
+If queries are mostly by `user`:
 
 ```sql
 ALTER TABLE tutorial.wiki_events
 MODIFY ORDER BY (user, timestamp);
 ```
 
-> ⚠️ این دستور روی جداول موجود با داده محدودیت دارد. بهترین کار ساخت جدول جدید و انتقال داده است.
+> ⚠️ This has limitations on existing tables with data. Best practice is to create a new table and migrate data.
 
-### TTL روی جدول اصلی
+### TTL on the Main Table
 
 ```sql
 ALTER TABLE tutorial.wiki_events
 MODIFY TTL toDateTime(timestamp) + INTERVAL 30 DAY;
 ```
 
-### افزودن Projection (برای کوئری‌های تکراری)
+### Add a Projection (for Recurring Queries)
 
 ```sql
 ALTER TABLE tutorial.wiki_events
@@ -844,9 +844,9 @@ ADD PROJECTION user_stats (
 );
 ```
 
-### افزایش Retention در Kafka
+### Increase Kafka Retention
 
-اگر می‌خواهید داده‌ها بیشتر در Kafka بمانند:
+If you want data to stay longer in Kafka:
 
 ```bash
 docker exec -it kafka-broker /opt/kafka/bin/kafka-configs.sh \
@@ -855,38 +855,38 @@ docker exec -it kafka-broker /opt/kafka/bin/kafka-configs.sh \
   --add-config retention.ms=604800000
 ```
 
-(۷ روز = 604800000 میلی‌ثانیه)
+(7 days = 604800000 ms)
 
 ---
 
-## ۱۴. خطاهای رایج و راه‌حل‌ها
+## 14. Common Errors and Solutions
 
-| خطا | علت | راه‌حل |
+| Error | Cause | Solution |
 |---|---|---|
-| `DNS resolution failed` | ClickHouse و Kafka در یک شبکه نیستند. | `docker network connect kafka-lab_default clickhouse` |
-| `UnknownTopicOrPartition` | تاپیک ساخته نشده. | تاپیک را در Kafka UI بسازید. |
-| `Authentication failed` | کاربر/رمز اشتباه. | کاربر `dbeaver_user` بسازید. |
-| `Cannot alter settings` | موتور Kafka از ALTER پشتیبانی نمی‌کند. | جدول را حذف و بازسازی کنید. |
-| `CANNOT_READ_FROM_FILE_DESCRIPTOR` | فایل init خالی یا دایرکتوری. | فایل SQL را بررسی کنید. |
-| `Direct select is not allowed` | SELECT مستقیم از Kafka Engine. | از MV یا `stream_like_engine_allow_direct_select=1` استفاده کنید. |
-| `ACCESS_STORAGE_READONLY` | تلاش برای تغییر کاربر `default`. | کاربر جدید بسازید. |
-| `ACCESS_DENIED` | کاربر دسترسی لازم را ندارد. | `GRANT CURRENT GRANTS` استفاده کنید. |
-| `Connection refused (localhost:9000)` | ClickHouse هنوز آماده نیست. | چند ثانیه صبر کنید و دوباره تلاش کنید. |
-| `Only RowBinaryWithNameAndTypes...` | SELECT از جدول Kafka بدون FORMAT مناسب. | از `FORMAT JSONEachRow` استفاده کنید. |
+| `DNS resolution failed` | ClickHouse and Kafka not on the same network. | `docker network connect kafka-lab_default clickhouse` |
+| `UnknownTopicOrPartition` | Topic not created. | Create the topic in Kafka UI. |
+| `Authentication failed` | Wrong user/password. | Create `dbeaver_user`. |
+| `Cannot alter settings` | Kafka engine doesn't support ALTER. | Drop and recreate the table. |
+| `CANNOT_READ_FROM_FILE_DESCRIPTOR` | Init file empty or a directory. | Check the SQL file. |
+| `Direct select is not allowed` | Direct SELECT from Kafka Engine. | Use MV or `stream_like_engine_allow_direct_select=1`. |
+| `ACCESS_STORAGE_READONLY` | Trying to modify `default` user. | Create a new user. |
+| `ACCESS_DENIED` | User lacks required privileges. | Use `GRANT CURRENT GRANTS`. |
+| `Connection refused (localhost:9000)` | ClickHouse not ready yet. | Wait a few seconds and retry. |
+| `Only RowBinaryWithNameAndTypes...` | SELECT from Kafka table without proper FORMAT. | Use `FORMAT JSONEachRow`. |
 
 ---
 
-## ۱۵. نکات عملیاتی
+## 15. Operational Notes
 
-### ۱. هرگز مستقیماً از جدول Kafka SELECT نزنید
+### 1. Never SELECT Directly from the Kafka Table
 
-Offset را جلو می‌برد و MVها داده را از دست می‌دهند.
+It advances the Offset and MVs lose data.
 
-### ۲. تعداد Consumer را با پارتیشن هماهنگ کنید
+### 2. Match Consumer Count with Partition Count
 
-اگر ۳ پارتیشن دارید و ۱ Consumer، دو پارتیشن بیکار می‌مانند.
+If you have 3 partitions and 1 consumer, two partitions are idle.
 
-### ۳. Lag مصرف‌کننده را مانیتور کنید
+### 3. Monitor Consumer Lag
 
 ```sql
 SELECT
@@ -898,42 +898,42 @@ SELECT
 FROM system.kafka_consumers;
 ```
 
-### ۴. گروه مصرف‌کننده را عوض نکنید
+### 4. Don't Change the Consumer Group
 
-تغییر `kafka_group_name` باعث خواندن از ابتدای تاپیک و ذخیره‌ی داده‌ی تکراری می‌شود.
+Changing `kafka_group_name` causes reading from the beginning and storing duplicate data.
 
-### ۵. پارتیشن‌بندی MergeTree را جدی بگیرید
+### 5. Take MergeTree Partitioning Seriously
 
-`PARTITION BY toYYYYMM(timestamp)` برای داده‌های ماهانه عالی است. اگر داده‌های شما روزانه زیاد است، از `toYYYYMMDD(timestamp)` استفاده کنید.
+`PARTITION BY toYYYYMM(timestamp)` is great for monthly data. If your daily data volume is high, use `toYYYYMMDD(timestamp)`.
 
-### ۶. جدول خطاها را مانیتور کنید
+### 6. Monitor the Errors Table
 
-اگر تعداد خطاها زیاد شد، یعنی Producer یا ساختار داده مشکل دارد.
+If error counts increase, the Producer or data structure has issues.
 
-### ۷. از `ingested_at` غافل نشوید
+### 7. Don't Ignore `ingested_at`
 
-این ستون به شما می‌گوید داده چه زمانی وارد ClickHouse شده، که با `timestamp` (زمان وقوع رویداد) متفاوت است. برای محاسبه‌ی Lag و دیباگ عالی است.
+This column tells you when data entered ClickHouse, which differs from `timestamp` (event time). Great for Lag calculation and debugging.
 
-### ۸. Backup بگیرید
+### 8. Take Backups
 
 ```sql
 BACKUP TABLE tutorial.wiki_events TO Disk('backups', 'wiki_events_backup.zip');
 ```
 
-### ۹. فایل init را بعد از هر تغییر volume پاک کنید
+### 9. Clear the Init File After Every Volume Change
 
 ```bash
 docker compose down -v
 docker compose up -d
 ```
 
-### ۱۰. برای محیط Production، از کاربر `default` استفاده نکنید
+### 10. Don't Use the `default` User in Production
 
-کاربر `dbeaver_user` با رمز واضح بسازید و آن را در DBeaver و Producer استفاده کنید.
+Create `dbeaver_user` with a clear password and use it in DBeaver and the Producer.
 
 ---
 
-## ۱۶. مراجع
+## 16. References
 
 - [ClickHouse Kafka Engine Documentation](https://clickhouse.com/docs/en/engines/table-engines/integrations/kafka)
 - [ClickHouse MergeTree Documentation](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/mergetree)
@@ -943,26 +943,26 @@ docker compose up -d
 
 ---
 
-## پیوست: چک‌لیست راه‌اندازی سریع
+## Appendix: Quick Setup Checklist
 
-- [ ] راه‌اندازی `docker-compose.yaml` با ClickHouse، Kafka، Kafka UI
-- [ ] اتصال ClickHouse به شبکه Kafka (`docker network connect`)
-- [ ] ساخت دیتابیس `tutorial`
-- [ ] ساخت جدول `wiki_events_queue` با `kafka_handle_error_mode = 'stream'`
-- [ ] ساخت جدول `wiki_events`
-- [ ] ساخت MV اصلی `wiki_events_mv`
-- [ ] ساخت جدول `wiki_events_errors`
-- [ ] ساخت MV خطاها `wiki_events_errors_mv`
-- [ ] ساخت تاپیک `wiki-events` در Kafka
-- [ ] ساخت کاربر `dbeaver_user` و تنظیم `access_management`
-- [ ] اتصال DBeaver با `dbeaver_user`
-- [ ] اجرای Producer (`python producer.py`)
-- [ ] بررسی `SELECT count() FROM tutorial.wiki_events`
-- [ ] بررسی `SELECT count() FROM tutorial.wiki_events_errors`
-- [ ] اجرای کوئری‌های تحلیلی
+- [ ] Bring up `docker-compose.yaml` with ClickHouse, Kafka, Kafka UI
+- [ ] Connect ClickHouse to the Kafka network (`docker network connect`)
+- [ ] Create the `tutorial` database
+- [ ] Create the `wiki_events_queue` table with `kafka_handle_error_mode = 'stream'`
+- [ ] Create the `wiki_events` table
+- [ ] Create the main MV `wiki_events_mv`
+- [ ] Create the `wiki_events_errors` table
+- [ ] Create the errors MV `wiki_events_errors_mv`
+- [ ] Create the `wiki-events` topic in Kafka
+- [ ] Create `dbeaver_user` and configure `access_management`
+- [ ] Connect DBeaver with `dbeaver_user`
+- [ ] Run the Producer (`python producer.py`)
+- [ ] Check `SELECT count() FROM tutorial.wiki_events`
+- [ ] Check `SELECT count() FROM tutorial.wiki_events_errors`
+- [ ] Run analytical queries
 
 ---
 
-## مجوز
+## License
 
-این مستند بخشی از پروژه [streaming-data-pipeline](https://github.com/your-username/streaming-data-pipeline) است.
+This document is part of the [streaming-data-pipeline](https://github.com/your-username/streaming-data-pipeline) project.
