@@ -1,0 +1,30 @@
+﻿# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# Logs
+*.log
+producer.log
+
+# Environment
+.env
+
+# Data
+data/
+
+# OS
+.DS_Store
+Thumbs.db

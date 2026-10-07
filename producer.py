@@ -1,15 +1,19 @@
 """
-Wikimedia Recent Changes → Kafka Producer
+Wikimedia Recent Changes → Kafka Producer (Bronze Layer)
 
-این اسکریپت به جریان زنده‌ی ویکی‌مدیا متصل می‌شود و رویدادها را
-به صورت JSON به تاپیک Kafka ارسال می‌کند.
+این اسکریپت به جریان زنده‌ی ویکی‌مدیا متصل می‌شود و کل رویداد JSON
+را بدون هیچ تبدیلی به تاپیک Kafka ارسال می‌کند.
+
+طراحی برای معماری مدالیون:
+    - لایه‌ی Bronze: ذخیره‌ی داده‌ی خام ۱۰۰٪ بدون دست‌کاری
+    - هیچ فیلدی حذف نمی‌شود، هیچ تبدیلی انجام نمی‌شود
+    - پردازش و استخراج فیلدها در لایه‌های Silver و Gold انجام می‌شود
 
 قابلیت‌ها:
     - اتصال خودکار مجدد در صورت قطع شدن جریان (Exponential Backoff)
     - Idempotent Producer برای جلوگیری از ارسال تکراری
     - مدیریت تمیز Ctrl+C و SIGTERM
     - لاگ‌گیری همزمان در کنسول و فایل
-    - سازگار با ClickHouse Kafka Engine با kafka_handle_error_mode='stream'
 """
 
 import json
@@ -17,7 +21,6 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime, timezone
 from typing import Optional
 
 import requests
@@ -123,13 +126,13 @@ def create_producer(retries: int = KAFKA_MAX_RETRIES) -> Optional[KafkaProducer]
                 value_serializer=JsonSerializer(),
                 key_serializer=KeySerializer(),
                 # --- تنظیمات دوام و Idempotency ---
-                acks="all",                       # انتظار برای تأیید همه replicaها
-                retries=5,                        # تلاش مجدد خودکار در سطح بروکر
-                enable_idempotence=True,          # جلوگیری از ارسال تکراری
-                max_in_flight_requests_per_connection=5,  # شرط Idempotency
+                acks="all",
+                retries=5,
+                enable_idempotence=True,
+                max_in_flight_requests_per_connection=5,
                 # --- بهینه‌سازی ---
-                linger_ms=100,                    # batch کردن پیام‌ها
-                compression_type="gzip",          # کاهش حجم شبکه
+                linger_ms=100,
+                compression_type="gzip",
                 # --- Timeoutها ---
                 max_block_ms=30000,
                 request_timeout_ms=30000,
@@ -148,28 +151,33 @@ def create_producer(retries: int = KAFKA_MAX_RETRIES) -> Optional[KafkaProducer]
 
 
 # ============================================================================
-# تبدیل رویداد خام به payload
+# استخراج کلید پیام
 # ============================================================================
 
-def build_payload(event: dict) -> dict:
+def extract_key(event: dict) -> str:
     """
-    فیلدهای موردنیاز را از رویداد خام ویکی‌مدیا استخراج می‌کند.
+    کلید پیام را از رویداد استخراج می‌کند.
 
-    Args:
-        event: رویداد خام دریافتی از SSE.
+    ترتیب اولویت:
+        1. meta.id  (شناسه منحصربه‌فرد رویداد در ویکی‌مدیا)
+        2. title    (عنوان صفحه)
+        3. id       (شناسه قدیمی)
+        4. رشته خالی
 
-    Returns:
-        دیکشنری با فیلدهای هماهنگ با جدول ClickHouse.
+    نکته: استفاده از کلید باعث می‌شود پیام‌های یک صفحه به یک پارتیشن
+    بروند و ترتیب رویدادها برای آن صفحه حفظ شود.
     """
-    return {
-        "title": event.get("title") or "",
-        "user": event.get("user") or "",
-        "bot": 1 if event.get("bot") else 0,
-        "timestamp": datetime.fromtimestamp(
-            event.get("timestamp", 0), tz=timezone.utc
-        ).strftime("%Y-%m-%d %H:%M:%S"),
-        "comment": (event.get("comment") or "")[:500],
-    }
+    meta = event.get("meta") or {}
+    if isinstance(meta, dict) and meta.get("id"):
+        return str(meta["id"])
+
+    if event.get("title"):
+        return str(event["title"])
+
+    if event.get("id"):
+        return str(event["id"])
+
+    return ""
 
 
 # ============================================================================
@@ -178,12 +186,10 @@ def build_payload(event: dict) -> dict:
 
 def process_event(producer: KafkaProducer, line: bytes, stats: dict) -> None:
     """
-    یک خط از جریان SSE را پردازش و به Kafka ارسال می‌کند.
+    یک خط از جریان SSE را پردازش و کل رویداد را به Kafka ارسال می‌کند.
 
-    Args:
-        producer: KafkaProducer فعال.
-        line: یک خط خام از SSE.
-        stats: دیکشنری شمارنده‌ها (sent/skipped/failed).
+    در این نسخه (Bronze)، هیچ تبدیلی انجام نمی‌شود و کل رویداد
+    به صورت JSON خام به Kafka فرستاده می‌شود.
     """
     decoded = line.decode("utf-8")
 
@@ -198,10 +204,11 @@ def process_event(producer: KafkaProducer, line: bytes, stats: dict) -> None:
         logger.debug("Skipped malformed JSON line.")
         return
 
-    payload = build_payload(event)
+    # استخراج کلید پیام
+    key = extract_key(event)
 
     try:
-        future = producer.send(TOPIC, key=payload["title"], value=payload)
+        future = producer.send(TOPIC, key=key, value=event)
         future.get(timeout=SEND_TIMEOUT_SECONDS)
         stats["sent"] += 1
 
@@ -212,11 +219,14 @@ def process_event(producer: KafkaProducer, line: bytes, stats: dict) -> None:
                 stats["sent"], stats["skipped"], stats["failed"],
             )
         else:
-            logger.info("Sent -> %s | %s", payload["title"], payload["user"])
+            # لاگ خلاصه برای هر پیام (فقط عنوان و کاربر)
+            title = event.get("title") or "(no title)"
+            user = event.get("user") or "(no user)"
+            logger.info("Sent -> %s | %s", title, user)
 
     except Exception as exc:
         stats["failed"] += 1
-        logger.error("Send failed for title=%r: %s", payload["title"], exc)
+        logger.error("Send failed for key=%r: %s", key, exc)
 
 
 # ============================================================================
@@ -235,9 +245,6 @@ def _sleep_with_interrupt(seconds: int) -> None:
 def stream_from_wikimedia(producer: KafkaProducer) -> None:
     """
     به جریان SSE ویکی‌مدیا وصل می‌شود و در صورت قطع، دوباره تلاش می‌کند.
-
-    Args:
-        producer: KafkaProducer فعال.
     """
     attempt = 0
     delay = RECONNECT_DELAY_SECONDS
@@ -298,7 +305,7 @@ def stream_from_wikimedia(producer: KafkaProducer) -> None:
 
 def main() -> int:
     """نقطه ورود برنامه."""
-    logger.info("Starting Wikimedia → Kafka producer.")
+    logger.info("Starting Wikimedia → Kafka producer (Bronze layer).")
 
     producer = create_producer()
     if producer is None:

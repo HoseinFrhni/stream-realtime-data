@@ -2,7 +2,7 @@
 # Streaming Data Pipeline - Docker Compose
 # ============================================================================
 # سرویس‌ها:
-#   - clickhouse: مصرف‌کننده‌ی جریان (Consumer) و ذخیره‌سازی تحلیلی
+#   - clickhouse: مصرف‌کننده‌ی جریان و ذخیره‌سازی تحلیلی
 #   - kafka-broker: پیام‌رسان در حالت KRaft (بدون Zookeeper)
 #   - kafka-ui: رابط کاربری برای مدیریت Kafka
 #
@@ -25,33 +25,27 @@ services:
     container_name: clickhouse
     hostname: clickhouse
     ports:
-      - "8123:8123"   # HTTP interface (برای DBeaver و کلاینت‌های وب)
+      - "8123:8123"   # HTTP interface
       - "9000:9000"   # Native TCP interface
     environment:
-      # دیتابیس پیش‌فرض که در اولین اجرا ساخته می‌شود
       CLICKHOUSE_DB: tutorial
-      # کاربر پیش‌فرض (بدون رمز - فقط برای محیط توسعه)
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_USER: admin
+      CLICKHOUSE_PASSWORD: admin123
     volumes:
-      # ذخیره‌سازی داده‌های ClickHouse
       - clickhouse-volume:/var/lib/clickhouse
-      # اسکریپت‌های SQL که در اولین اجرا به طور خودکار اجرا می‌شوند
-      # اگر پوشه‌ی init-db را ندارید، این خط را حذف یا کامنت کنید
       - ./init-db:/docker-entrypoint-initdb.d
     networks:
       - services
-    # اطمینان از اینکه Kafka قبل از ClickHouse آماده است
     depends_on:
       kafka-broker:
         condition: service_healthy
-    # healthcheck برای اطمینان از آماده بودن ClickHouse
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 20s
+    restart: unless-stopped
 
   # --------------------------------------------------------------------------
   # Kafka Broker - حالت KRaft (بدون Zookeeper)
@@ -64,66 +58,59 @@ services:
       - "9092:9092"    # External listener (برای Producer روی هاست)
       - "29092:29092"  # Internal listener (برای ارتباط بین کانتینرها)
     environment:
-      # --- KRaft Settings ---
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka-broker:29093'
-      # --- Listeners ---
       KAFKA_LISTENERS: 'PLAINTEXT://:29092,CONTROLLER://:29093,EXTERNAL://:9092'
       KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka-broker:29092,EXTERNAL://localhost:9092'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      # --- Replication Settings ---
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      # --- Log Directory ---
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
-      # --- JMX (Optional) ---
       KAFKA_JMX_PORT: 9999
       KAFKA_JMX_HOSTNAME: localhost
     volumes:
       - kafka-volume:/var/lib/kafka/data
     networks:
       - services
-    # healthcheck برای اطمینان از آماده بودن Kafka
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 9092 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
+    restart: unless-stopped
 
   # --------------------------------------------------------------------------
-  # Kafka UI - رابط کاربری وب برای مدیریت Kafka
+  # Kafka UI - رابط کاربری وب
   # --------------------------------------------------------------------------
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     ports:
-      - "8082:8080"   # پورت هاست 8082 → پورت کانتینر 8080
+      - "8082:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
-      # اتصال به لیسنر داخلی Kafka
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-broker:29092
     networks:
       - services
     depends_on:
       kafka-broker:
         condition: service_healthy
+    restart: unless-stopped
 
 # ============================================================================
-# Volumes - برای ذخیره‌سازی دائمی داده‌ها
+# Volumes
 # ============================================================================
 volumes:
   clickhouse-volume:
-    # داده‌های ClickHouse
   kafka-volume:
-    # داده‌های Kafka (logs, offsets, ...)
 
 # ============================================================================
-# Networks - شبکه‌ی مشترک بین سرویس‌ها
+# Networks
 # ============================================================================
 networks:
   services:
