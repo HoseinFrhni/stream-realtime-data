@@ -2,11 +2,12 @@
 
 <div align="center">
 
-**یک خط لوله‌ی داده‌ی زنده با Kafka و ClickHouse بر اساس معماری مدالیون**
+**A live data pipeline with Kafka and ClickHouse based on the Medallion Architecture**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![Kafka](https://img.shields.io/badge/Kafka-3.9-black)](https://kafka.apache.org/)
-[![ClickHouse](https://img.shields.io/badge/ClickHouse-24.8-yellow)](https://clickhouse.com/)
+[![ClickHouse](https://img.shields.io/badge/ClickHouse-24.10-yellow)](https://clickhouse.com/)
+[![Metabase](https://img.shields.io/badge/Metabase-latest-blueviolet)](https://www.metabase.com/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
@@ -14,23 +15,32 @@
 
 ---
 
-## 📖 درباره‌ی پروژه
+## 📖 About the Project
 
-این پروژه یک **خط لوله‌ی داده‌ی جریانی (Streaming Data Pipeline)** کامل است که داده‌های زنده‌ی **تغییرات اخیر ویکی‌مدیا** را از طریق Kafka دریافت کرده و در ClickHouse با **معماری مدالیون (Medallion Architecture)** ذخیره و پردازش می‌کند.
+This project is a complete **Streaming Data Pipeline** that consumes live **Wikimedia Recent Changes** data via Kafka and stores/processes it in ClickHouse using the **Medallion Architecture**. The final layer is visualized in **Metabase** with real-time dashboards.
 
-هدف این پروژه، تمرین عملی مفاهیم کلیدی مهندسی داده است:
+The goal is to practice key data engineering concepts hands-on:
 
-- ✅ Kafka و Kafka Connect
-- ✅ ClickHouse و موتورهای MergeTree
-- ✅ Materialized View و Kafka Engine
-- ✅ معماری مدالیون (Bronze → Silver → Gold)
-- ✅ مدیریت خطا و Retry
-- ✅ Idempotency و Exactly-Once Semantics
-- ✅ Docker و شبکه‌های کانتینری
+- ✅ Kafka and Kafka Connect
+- ✅ ClickHouse and MergeTree engines
+- ✅ Materialized View and Kafka Engine
+- ✅ Medallion Architecture (Bronze → Silver → Gold)
+- ✅ Error handling and Retry
+- ✅ Idempotency and Exactly-Once Semantics
+- ✅ Docker and container networks
+- ✅ Business Intelligence with Metabase
 
 ---
 
-## 🏛️ معماری
+## 📸 Dashboard Preview
+
+![Wiki Real-time Analytics Dashboard](docs/images/dashboard-full.png)
+
+*Real-time analytics dashboard built with Metabase showing 2,900+ edits, top users, language distribution, and top pages.*
+
+---
+
+## 🏛️ Architecture
 
 ```
 ┌──────────────────┐     ┌─────────────────┐     ┌──────────────────────────┐
@@ -63,112 +73,175 @@
                                                               │
                                                               ▼
                                                    ┌────────────────────┐
-                                                   │  BI / Metabase     │
+                                                   │     Metabase       │
+                                                   │  Real-time BI      │
                                                    └────────────────────┘
 ```
 
 ---
 
-## 🥉🥈🥇 معماری مدالیون
+## 🥉🥈🥇 Medallion Architecture
 
-این پروژه از **معماری مدالیون** پیروی می‌کند که در آن داده‌ها در سه لایه‌ی متوالی پردازش می‌شوند:
+This project follows the **Medallion Architecture**, where data is processed in three sequential layers:
 
-### 🥉 لایه‌ی Bronze (خام)
+### 🥉 Bronze Layer (Raw)
 
-- **هدف:** ذخیره‌ی داده‌ی خام ۱۰۰٪ بدون هیچ تبدیلی.
-- **جداول:** `bronze_wiki_events`, `bronze_wiki_events_errors`
-- **ویژگی:** حفظ تمام فیلدهای اصلی رویداد + متادیتای Kafka (topic, partition, offset, timestamp)
-- **TTL:** ۳۰ روز
-- **مصرف‌کننده:** مهندسین داده (برای دیباگ و Replay)
+- **Goal:** Store 100% raw data without any transformation.
+- **Tables:** `bronze_wiki_events`, `bronze_wiki_events_errors`
+- **Features:** Preserves all event fields + Kafka metadata (topic, partition, offset, timestamp)
+- **TTL:** 30 days
+- **Consumers:** Data Engineers (for debugging and replay)
 
-### 🥈 لایه‌ی Silver (پاک‌سازی‌شده)
+### 🥈 Silver Layer (Cleaned)
 
-- **هدف:** تجزیه‌ی JSON خام به فیلدهای ساخت‌یافته، اعتبارسنجی، رفع تکرار.
-- **جداول:** `silver_wiki_events`
-- **ویژگی:** فیلدهای استخراج‌شده + تبدیل نوع + غنی‌سازی (استخراج زبان از ویکی)
-- **TTL:** ۹۰ روز
-- **مصرف‌کننده:** تحلیل‌گران و دانشمندان داده
+- **Goal:** Parse raw JSON into structured fields, validate, deduplicate.
+- **Tables:** `silver_wiki_events`
+- **Features:** Extracted fields + type conversion + enrichment (language derived from wiki)
+- **TTL:** 90 days
+- **Consumers:** Analysts and Data Scientists
 
-### 🥇 لایه‌ی Gold (تجاری)
+### 🥇 Gold Layer (Business)
 
-- **هدف:** تجمیع داده و ساخت KPI برای مصرف مستقیم BI.
-- **جداول:** `gold_wiki_hourly_stats`, `gold_top_users_daily`, `gold_top_pages_hourly`, `gold_language_hourly`
-- **ویژگی:** آمار تجمیعی، بهینه برای کوئری‌های سریع
-- **TTL:** ۱۸۰-۳۶۵ روز
-- **مصرف‌کننده:** مدیران، BI، ML
+- **Goal:** Aggregate data and build KPIs for direct BI consumption.
+- **Tables:** `gold_wiki_hourly_stats`, `gold_top_users_daily`, `gold_top_pages_hourly`, `gold_language_hourly`
+- **Features:** Aggregated statistics, optimized for fast queries
+- **TTL:** 180–365 days
+- **Consumers:** Managers, BI, ML
 
 ---
 
-## 📁 ساختار پروژه
+## 📁 Project Structure
 
 ```
 stream-realtime-data/
 │
-├── 📁 sql/                          # اسکریپت‌های SQL برای ساخت لایه‌ها
-│   ├── 01-bronze-layer.sql          # لایه‌ی Bronze (خام)
-│   ├── 02-silver-layer.sql          # لایه‌ی Silver (پاک‌سازی‌شده)
-│   ├── 03-gold-layer.sql            # لایه‌ی Gold (تجمیعی) [به‌زودی]
-│   └── 99-utilities.sql             # کوئری‌های مانیتورینگ و دیباگ
+├── 📁 sql/                          # SQL scripts to build layers
+│   ├── 01-bronze-layer.sql          # Bronze layer (raw)
+│   ├── 02-silver-layer.sql          # Silver layer (cleaned)
+│   ├── 03-gold-layer.sql            # Gold layer (aggregated)
+│   └── 99-utilities.sql             # Monitoring and debugging queries
 │
-├── 📁 docs/                         # مستندات تفصیلی
-│   ├── clickhouse-consumer.md       # راهنمای ClickHouse به عنوان Consumer
-│   └── medallion-architecture.md    # توضیح کامل معماری مدالیون [به‌زودی]
+├── 📁 init-db/                      # Auto-executed SQL on ClickHouse first run
+│   ├── 01-bronze-layer.sql
+│   ├── 02-silver-layer.sql
+│   └── 03-gold-layer.sql
 │
-├── 📁 init-db/                      # (حذف شده - با sql/ جایگزین شد)
+├── 📁 docs/                         # Detailed documentation
+│   ├── clickhouse-consumer.md       # Guide to ClickHouse as Consumer
+│   ├── medallion-architecture.md    # Medallion Architecture explanation
+│   ├── metabase-dashboard.md        # Metabase dashboard guide
+│   └── images/                      # Screenshots and diagrams
 │
-├── 🐍 producer.py                   # Producer پایتون (ویکی‌مدیا → Kafka)
-├── 🐳 docker-compose.yaml           # زیرساخت (ClickHouse + Kafka + Kafka UI)
-├── 📄 requirements.txt              # وابستگی‌های پایتون
-├── 📄 .env.example                  # نمونه‌ی متغیرهای محیطی
-├── 📄 .gitignore                    # فایل‌های نادیده‌گرفته‌شده
-├── 📄 README.md                     # همین فایل
-└── 📄 sample.json                   # نمونه‌ی داده‌ی ویکی‌مدیا
+├── 📁 metabase-plugins/             # ClickHouse driver for Metabase
+│   └── clickhouse.metabase-driver.jar
+│
+├── 🐍 producer.py                   # Python Producer (Wikimedia → Kafka)
+├── 🐳 docker-compose.yaml           # Infrastructure (ClickHouse + Kafka + Kafka UI + Metabase)
+├── 📄 Makefile                      # One-command shortcuts
+├── 📄 requirements.txt              # Python dependencies
+├── 📄 .env.example                  # Environment variables sample
+├── 📄 .gitignore                    # Ignored files
+├── 📄 README.md                     # This file
+└── 📄 sample.json                   # Sample Wikimedia event
 ```
 
 ---
 
-## 🚀 راه‌اندازی سریع
+## 🚀 Quick Start
 
-### پیش‌نیازها
+### Prerequisites
 
-| ابزار | نسخه‌ی پیشنهادی | توضیح |
+| Tool | Recommended Version | Purpose |
 |---|---|---|
-| **Docker Desktop** | 24.0+ | برای اجرای کانتینرها |
-| **Python** | 3.10+ | برای اجرای Producer |
-| **Git** | 2.30+ | برای Clone کردن پروژه |
-| **DBeaver** یا **PyCharm Pro** | آخرین نسخه | برای اجرای کوئری‌های SQL |
+| **Docker Desktop** | 24.0+ | Run containers |
+| **Python** | 3.10+ | Run the Producer |
+| **Git** | 2.30+ | Clone the project |
+| **DBeaver** or **PyCharm Pro** | Latest | Run SQL queries |
+| **Make** | Any | One-command setup (optional) |
 
-### گام ۱: Clone کردن پروژه
+### Method 1: Automated Setup with Makefile (Recommended)
+
+```bash
+# 1. Clone the project
+git clone https://github.com/YOUR-USERNAME/stream-realtime-data.git
+cd stream-realtime-data
+
+# 2. Download the ClickHouse driver for Metabase
+mkdir -p metabase-plugins
+curl -L -o metabase-plugins/clickhouse.metabase-driver.jar \
+  https://github.com/ClickHouse/metabase-clickhouse-driver/releases/latest/download/clickhouse.metabase-driver.jar
+
+# 3. Bring everything up (fully automated)
+make up
+
+# 4. Run the Producer
+make producer
+```
+
+**What `make up` does automatically:**
+
+- ✅ Builds ClickHouse (v24.10) with all 15 Bronze/Silver/Gold tables
+- ✅ Starts Kafka Broker in KRaft mode (no Zookeeper)
+- ✅ Creates the `wiki-events` topic automatically
+- ✅ Starts Kafka UI
+- ✅ Starts Metabase for BI
+
+**Useful Makefile commands:**
+
+| Command | Description |
+|---|---|
+| `make up` | Start all services |
+| `make down` | Stop services (data preserved) |
+| `make reset` | Delete everything and start fresh |
+| `make producer` | Run the Producer |
+| `make test` | Test connections and structure |
+| `make sql` | Open ClickHouse SQL console |
+| `make logs` | View all logs |
+| `make status` | Show container status |
+| `make clean` | Clean up temporary files |
+
+### Method 2: Manual Setup with Docker Compose
+
+#### Step 1: Clone the project
 
 ```bash
 git clone https://github.com/YOUR-USERNAME/stream-realtime-data.git
 cd stream-realtime-data
 ```
 
-### گام ۲: بالا آوردن زیرساخت
+#### Step 2: Download the ClickHouse driver
+
+```bash
+mkdir -p metabase-plugins
+curl -L -o metabase-plugins/clickhouse.metabase-driver.jar \
+  https://github.com/ClickHouse/metabase-clickhouse-driver/releases/latest/download/clickhouse.metabase-driver.jar
+```
+
+#### Step 3: Bring up the infrastructure
 
 ```bash
 docker compose up -d
 ```
 
-**سرویس‌های بالا آمده:**
+**Services:**
 
-| سرویس | پورت | آدرس |
+| Service | Port | URL |
 |---|---|---|
 | ClickHouse HTTP | 8123 | http://localhost:8123 |
 | ClickHouse Native | 9000 | - |
 | Kafka | 9092 | - |
 | Kafka UI | 8082 | http://localhost:8082 |
+| Metabase | 3000 | http://localhost:3000 |
 
-**تایید:**
+**Verify:**
 
 ```bash
 docker ps
 ```
 
-باید سه کانتینر `clickhouse`, `kafka-broker`, `kafka-ui` را ببینید.
+You should see `clickhouse`, `kafka-broker`, `kafka-ui`, and `metabase` containers.
 
-### گام ۳: ساخت تاپیک Kafka
+#### Step 4: Create the Kafka topic
 
 ```bash
 docker exec -it kafka-broker /opt/kafka/bin/kafka-topics.sh \
@@ -177,7 +250,7 @@ docker exec -it kafka-broker /opt/kafka/bin/kafka-topics.sh \
   --partitions 3 --replication-factor 1
 ```
 
-**تایید:**
+**Verify:**
 
 ```bash
 docker exec -it kafka-broker /opt/kafka/bin/kafka-topics.sh \
@@ -185,42 +258,33 @@ docker exec -it kafka-broker /opt/kafka/bin/kafka-topics.sh \
   --list
 ```
 
-باید `wiki-events` را ببینید.
+You should see `wiki-events`.
 
-### گام ۴: ساخت لایه‌های ClickHouse
+#### Step 5: Create ClickHouse layers
 
-در **DBeaver** یا **PyCharm**:
+In **DBeaver** or **PyCharm**:
 
-1. اتصال به ClickHouse:
+1. Connect to ClickHouse:
    - **Host:** `localhost`
    - **Port:** `8123`
    - **User:** `admin`
    - **Password:** `admin123`
    - **Database:** `tutorial`
 
-2. اجرای فایل‌ها به ترتیب:
-   - `sql/01-bronze-layer.sql` → لایه‌ی Bronze
-   - `sql/02-silver-layer.sql` → لایه‌ی Silver
-   - `sql/03-gold-layer.sql` → لایه‌ی Gold (به‌زودی)
+2. Run files in order:
+   - `sql/01-bronze-layer.sql` → Bronze layer
+   - `sql/02-silver-layer.sql` → Silver layer
+   - `sql/03-gold-layer.sql` → Gold layer
 
-**تایید:**
+**Verify:**
 
 ```sql
 SHOW TABLES FROM tutorial;
 ```
 
-باید ببینید:
-```
-bronze_wiki_events
-bronze_wiki_events_errors
-bronze_wiki_events_errors_mv
-bronze_wiki_events_mv
-silver_wiki_events
-silver_wiki_events_mv
-wiki_events_queue
-```
+You should see all 15 tables.
 
-### گام ۵: نصب وابستگی‌های پایتون
+#### Step 6: Install Python dependencies
 
 ```bash
 python -m venv .venv
@@ -234,41 +298,44 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> **💡 نکته برای کاربران ایرانی:** اگر با خطای تحریم مواجه شدید، از میرور داخلی استفاده کنید:
+> **💡 Tip for Iranian users:** If you face sanctions-related errors, use an Iranian mirror:
 > ```bash
 > pip install -r requirements.txt \
 >   -i https://mirror-pypi.runflare.com/simple/ \
 >   --trusted-host mirror-pypi.runflare.com
 > ```
 
-### گام ۶: اجرای Producer
+#### Step 7: Run the Producer
 
 ```bash
 python producer.py
 ```
 
-**خروجی مورد انتظار:**
+**Expected output:**
 
 ```
-2026-10-07 12:00:00,123 [INFO] producer: Starting Wikimedia → Kafka producer.
-2026-10-07 12:00:00,456 [INFO] producer: Connected to Kafka at localhost:9092.
-2026-10-07 12:00:01,234 [INFO] producer: Connected to Wikimedia. Streaming...
-2026-10-07 12:00:01,345 [INFO] producer: Sent -> Python (programming language) | SomeUser
+2026-10-08 12:00:00,123 [INFO] producer: Starting Wikimedia → Kafka producer.
+2026-10-08 12:00:00,456 [INFO] producer: Connected to Kafka at localhost:9092.
+2026-10-08 12:00:01,234 [INFO] producer: Connected to Wikimedia. Streaming...
+2026-10-08 12:00:01,345 [INFO] producer: Sent -> Python (programming language) | SomeUser
 ...
 ```
 
-### گام ۷: بررسی داده‌ها
+#### Step 8: Verify data
 
-**در DBeaver:**
+**In DBeaver:**
 
 ```sql
--- تعداد رکوردهای Bronze
+-- Bronze row count
 SELECT count() FROM tutorial.bronze_wiki_events;
 
--- تعداد رکوردهای Silver
+-- Silver row count
 SELECT count() FROM tutorial.silver_wiki_events;
 
--- نمونه داده‌ها
+-- Gold row count
+SELECT count() FROM tutorial.gold_wiki_hourly_stats;
+
+-- Sample Silver data
 SELECT
     title,
     user,
@@ -281,70 +348,110 @@ ORDER BY event_timestamp DESC
 LIMIT 10;
 ```
 
-**در Kafka UI:**
-- مرورگر: http://localhost:8082
+**In Kafka UI:**
+- Browser: http://localhost:8082
 - Topics → `wiki-events` → Messages
 
+**In Metabase:**
+- Browser: http://localhost:3000
+- See the "Metabase Setup" section below
+
 ---
 
-## 🔌 منابع داده
+## 📊 Metabase Setup
 
-**منبع اصلی این پروژه:** [Wikimedia EventStreams](https://stream.wikimedia.org/v2/stream/recentchange)
+### Connecting Metabase to ClickHouse
 
-- جریان زنده‌ی ویرایش‌های ویکی‌پدیا و پروژه‌های خواهر
-- حدود ۴۰-۵۰ رویداد در ثانیه
-- فرمت: Server-Sent Events (SSE) + JSON
-- بدون نیاز به API Key
+1. Open http://localhost:3000 and create an admin account.
+2. Go to **Admin settings (gear icon) → Databases → Add database**.
+3. Select **ClickHouse** and fill in:
 
-**منابع جایگزین برای تمرین:**
+   | Field | Value |
+   |---|---|
+   | Display name | `ClickHouse Tutorial` |
+   | Host | `clickhouse` |
+   | Port | `8123` |
+   | Username | `admin` |
+   | Password | `admin123` |
+   | Database name | `tutorial` |
 
-| منبع | نوع | نیاز به Key |
+4. Click **Connect database**.
+
+> ⚠️ **Note:** Use `clickhouse` as the Host (not `localhost`), because Metabase runs inside a Docker container.
+
+### Dashboard Queries
+
+See [docs/metabase-dashboard.md](docs/metabase-dashboard.md) for full details on building the dashboard with 5 charts:
+
+1. **Total Wiki Edits** (Number)
+2. **Hourly Edit Activity** (Line)
+3. **Top 10 Human Users** (Bar)
+4. **Language Distribution** (Pie)
+5. **Top Pages** (Table)
+
+---
+
+## 🔌 Data Sources
+
+**Main source of this project:** [Wikimedia EventStreams](https://stream.wikimedia.org/v2/stream/recentchange)
+
+- Live stream of Wikipedia and sister project edits
+- About 40–50 events per second
+- Format: Server-Sent Events (SSE) + JSON
+- No API Key required
+
+**Alternative sources for practice:**
+
+| Source | Type | API Key Required |
 |---|---|---|
-| [Coinbase WebSocket](https://docs.cdp.coinbase.com/exchange/docs/websocket-overview) | ارز دیجیتال | خیر |
-| [Open-Meteo](https://open-meteo.com/) | آب و هوا | خیر |
-| [AISStream.io](https://aisstream.io/) | موقعیت کشتی‌ها | بله (رایگان) |
-| [Finnhub](https://finnhub.io/) | بازار سهام | بله (رایگان) |
+| [Coinbase WebSocket](https://docs.cdp.coinbase.com/exchange/docs/websocket-overview) | Cryptocurrency | No |
+| [Open-Meteo](https://open-meteo.com/) | Weather | No |
+| [AISStream.io](https://aisstream.io/) | Ship positions | Yes (free) |
+| [Finnhub](https://finnhub.io/) | Stock market | Yes (free) |
 
 ---
 
-## 📚 مستندات
+## 📚 Documentation
 
-| مستند | توضیح |
+| Document | Description |
 |---|---|
-| [ClickHouse as a Stream Consumer](docs/clickhouse-consumer.md) | راهنمای کامل استفاده از ClickHouse به عنوان Consumer |
-| [Medallion Architecture](docs/medallion-architecture.md) | توضیح معماری مدالیون و تصمیمات طراحی |
+| [ClickHouse as a Stream Consumer](docs/clickhouse-consumer.md) | Full guide on using ClickHouse as a Consumer |
+| [Medallion Architecture](docs/medallion-architecture.md) | Medallion architecture and design decisions |
+| [Metabase Dashboard](docs/metabase-dashboard.md) | Building real-time dashboards with Metabase |
 
 ---
 
-## 🛠️ تکنولوژی‌ها
+## 🛠️ Technologies
 
-| تکنولوژی | نسخه | کاربرد |
+| Technology | Version | Purpose |
 |---|---|---|
-| **Apache Kafka** | 3.9 (KRaft) | پیام‌رسان توزیع‌شده |
-| **ClickHouse** | 24.8 | پایگاه داده‌ی ستونی |
-| **Kafka UI** | latest | رابط کاربری Kafka |
+| **Apache Kafka** | 3.9 (KRaft) | Distributed message broker |
+| **ClickHouse** | 24.10 | Columnar database |
+| **Kafka UI** | latest | Kafka web UI |
+| **Metabase** | latest | Business Intelligence / dashboards |
 | **Python** | 3.10+ | Producer |
-| **Docker** | 24.0+ | اجرای کانتینرها |
-| **kafka-python** | 3.0+ | کلاینت Kafka در پایتون |
-| **requests** | 2.31+ | اتصال به Wikimedia SSE |
+| **Docker** | 24.0+ | Container runtime |
+| **kafka-python** | 3.0+ | Python Kafka client |
+| **requests** | 2.31+ | Wikimedia SSE client |
 
 ---
 
-## 🎯 مفاهیمی که یاد می‌گیرید
+## 🎯 Concepts You'll Learn
 
 - **Kafka**: Producer, Consumer, Topic, Partition, Consumer Group, KRaft
 - **ClickHouse**: MergeTree, ReplacingMergeTree, SummingMergeTree, Kafka Engine, Materialized View
-- **معماری مدالیون**: Bronze, Silver, Gold
-- **داده‌های جریانی**: SSE, Backpressure, Idempotency, Exactly-Once
-- **مهندسی داده**: ETL, Data Pipeline, Orchestration
+- **Medallion Architecture**: Bronze, Silver, Gold
+- **Streaming**: SSE, Backpressure, Idempotency, Exactly-Once
+- **Data Engineering**: ETL, Data Pipeline, Orchestration
 - **Docker**: Networking, Volumes, Healthcheck, Docker Compose
-- **SQL پیشرفته**: Window Functions, JSON Extraction, Aggregation
+- **Advanced SQL**: Window Functions, JSON Extraction, Aggregation
+- **BI**: Metabase, Dashboards, Questions, Filters
 
 ---
 
-## 🧪 کوئری‌های تحلیلی نمونه
+## 🧪 Sample Analytical Queries
 
-### پرکارترین کاربران انسانی
+### Top Human Users
 
 ```sql
 SELECT user, count() AS edits
@@ -355,7 +462,7 @@ ORDER BY edits DESC
 LIMIT 10;
 ```
 
-### نسبت ربات/انسان/ناشناس
+### Bot/Human/Anonymous Ratio
 
 ```sql
 SELECT
@@ -366,7 +473,7 @@ SELECT
 FROM tutorial.silver_wiki_events;
 ```
 
-### توزیع زبانی
+### Language Distribution
 
 ```sql
 SELECT language, count() AS events
@@ -376,7 +483,7 @@ ORDER BY events DESC
 LIMIT 15;
 ```
 
-### بزرگ‌ترین تغییرات صفحات
+### Biggest Page Changes
 
 ```sql
 SELECT title, user, length_delta, event_timestamp
@@ -386,52 +493,82 @@ ORDER BY length_delta DESC
 LIMIT 10;
 ```
 
----
+### Hourly Activity Chart
 
-## 🗺️ نقشه‌ی راه (Roadmap)
-
-- [x] لایه‌ی Bronze (داده‌ی خام)
-- [x] لایه‌ی Silver (داده‌ی پاک‌سازی‌شده)
-- [ ] لایه‌ی Gold (داده‌ی تجمیعی)
-- [ ] مستندات کامل معماری مدالیون
-- [ ] مصورسازی با Metabase یا Grafana
-- [ ] هشدار با Prometheus
-- [ ] Containerize کردن Producer (Dockerfile)
-- [ ] GitHub Actions برای CI/CD
-- [ ] تست‌های خودکار با pytest
-- [ ] dbt برای Transformation
-- [ ] Airflow برای Orchestration
+```sql
+SELECT
+    hour,
+    sum(total_edits) AS edits,
+    sum(bot_edits) AS bots,
+    sum(human_edits) AS humans
+FROM tutorial.gold_wiki_hourly_stats
+WHERE hour >= now() - INTERVAL 24 HOUR
+GROUP BY hour
+ORDER BY hour ASC;
+```
 
 ---
 
-## 🤝 مشارکت
+## 🗺️ Roadmap
 
-اگر می‌خواهید در این پروژه مشارکت کنید:
-
-1. Fork کنید.
-2. یک برنچ جدید بسازید (`git checkout -b feature/amazing-feature`).
-3. تغییرات را Commit کنید (`git commit -m 'Add amazing feature'`).
-4. Push کنید (`git push origin feature/amazing-feature`).
-5. یک Pull Request باز کنید.
+- [x] Bronze layer (raw data)
+- [x] Silver layer (cleaned data)
+- [x] Gold layer (aggregated data)
+- [x] Full Medallion Architecture documentation
+- [x] Automated setup with Makefile
+- [x] Visualization with Metabase
+- [ ] Containerize the Producer (Dockerfile)
+- [ ] Unit tests with pytest
+- [ ] GitHub Actions for CI/CD
+- [ ] Alerting with Prometheus + Grafana
+- [ ] dbt for Transformation
+- [ ] Airflow for Orchestration
+- [ ] Deploy to cloud (AWS/GCP)
 
 ---
 
-## 📝 مجوز
+## 🐛 Troubleshooting
 
-این پروژه تحت مجوز **MIT** منتشر شده است. برای جزئیات، فایل [LICENSE](LICENSE) را ببینید.
+| Issue | Solution |
+|---|---|
+| `Unknown codec family code: 0` | Upgrade to ClickHouse 24.10+ and `make reset` |
+| `Connection refused` in Metabase | Use `clickhouse` as Host, not `localhost` |
+| `Authentication failed` | Verify credentials: `admin` / `admin123` |
+| `No driver for ClickHouse` | Download the driver to `metabase-plugins/` |
+| Disk full | Run `docker system prune -a` and check `df -h` |
+| Producer stops with `ConnectionAborted` | Restart: it auto-reconnects with exponential backoff |
 
 ---
 
-## 🙏 تشکر
+## 🤝 Contributing
 
-- [Wikimedia EventStreams](https://stream.wikimedia.org/) برای داده‌ی زنده‌ی رایگان
-- [ClickHouse](https://clickhouse.com/) برای موتور تحلیلی فوق‌سریع
-- [Apache Kafka](https://kafka.apache.org/) برای پیام‌رسان مقاوم
+If you'd like to contribute:
+
+1. Fork the repo.
+2. Create a branch (`git checkout -b feature/amazing-feature`).
+3. Commit your changes (`git commit -m 'Add amazing feature'`).
+4. Push to the branch (`git push origin feature/amazing-feature`).
+5. Open a Pull Request.
+
+---
+
+## 📝 License
+
+This project is released under the **MIT** License. See [LICENSE](LICENSE) for details.
+
+---
+
+## 🙏 Acknowledgements
+
+- [Wikimedia EventStreams](https://stream.wikimedia.org/) for the free live data
+- [ClickHouse](https://clickhouse.com/) for the blazing-fast analytical engine
+- [Apache Kafka](https://kafka.apache.org/) for the resilient message broker
+- [Metabase](https://www.metabase.com/) for the easy-to-use BI platform
 
 ---
 
 <div align="center">
 
-**ساخته شده با ❤️ برای یادگیری مهندسی داده**
+**Built with ❤️ for learning data engineering**
 
 </div>

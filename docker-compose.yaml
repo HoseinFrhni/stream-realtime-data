@@ -1,19 +1,14 @@
 # ============================================================================
 # Streaming Data Pipeline - Docker Compose
 # ============================================================================
-# سرویس‌ها:
-#   - clickhouse: مصرف‌کننده‌ی جریان و ذخیره‌سازی تحلیلی
-#   - kafka-broker: پیام‌رسان در حالت KRaft (بدون Zookeeper)
-#   - kafka-ui: رابط کاربری برای مدیریت Kafka
-#
-# اجرا:
+# راه‌اندازی کامل خودکار:
 #   docker compose up -d
 #
-# توقف:
-#   docker compose down
-#
-# توقف و پاک کردن volumeها (برای اجرای مجدد اسکریپت‌های init):
-#   docker compose down -v
+# پس از اجرا، این‌ها خودکار انجام می‌شوند:
+#   - ClickHouse با جداول Bronze/Silver/Gold راه‌اندازی می‌شود
+#   - Kafka Broker بالا می‌آید
+#   - تاپیک wiki-events خودکار ساخته می‌شود
+#   - Kafka UI راه‌اندازی می‌شود
 # ============================================================================
 
 services:
@@ -21,7 +16,7 @@ services:
   # ClickHouse - مصرف‌کننده‌ی جریان داده
   # --------------------------------------------------------------------------
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:24.10
     container_name: clickhouse
     hostname: clickhouse
     ports:
@@ -33,12 +28,15 @@ services:
       CLICKHOUSE_PASSWORD: admin123
     volumes:
       - clickhouse-volume:/var/lib/clickhouse
-      - ./init-db:/docker-entrypoint-initdb.d
+      # اسکریپت‌ها در اولین اجرا به ترتیب الفبا اجرا می‌شوند
+      - ./init-db:/docker-entrypoint-initdb.d:ro
     networks:
       - services
     depends_on:
       kafka-broker:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
       interval: 10s
@@ -55,8 +53,8 @@ services:
     container_name: kafka-broker
     hostname: kafka-broker
     ports:
-      - "9092:9092"    # External listener (برای Producer روی هاست)
-      - "29092:29092"  # Internal listener (برای ارتباط بین کانتینرها)
+      - "9092:9092"    # External
+      - "29092:29092"  # Internal
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
@@ -85,6 +83,38 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
+  # Kafka Init - ساخت خودکار تاپیک wiki-events
+  # --------------------------------------------------------------------------
+  # این سرویس فقط یک بار اجرا می‌شود و پس از ساخت تاپیک، خاتمه می‌یابد.
+  # اگر تاپیک از قبل وجود داشته باشد، دوباره ساخته نمی‌شود.
+  # --------------------------------------------------------------------------
+  kafka-init:
+    image: apache/kafka:3.9.0
+    container_name: kafka-init
+    depends_on:
+      kafka-broker:
+        condition: service_healthy
+    networks:
+      - services
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Waiting for Kafka to be ready..."
+        sleep 3
+        echo "Creating topic 'wiki-events' (if not exists)..."
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka-broker:29092 \
+          --create --if-not-exists \
+          --topic wiki-events \
+          --partitions 3 \
+          --replication-factor 1
+        echo "Topic 'wiki-events' is ready."
+        /opt/kafka/bin/kafka-topics.sh \
+          --bootstrap-server kafka-broker:29092 \
+          --describe --topic wiki-events
+    restart: "no"
+
+  # --------------------------------------------------------------------------
   # Kafka UI - رابط کاربری وب
   # --------------------------------------------------------------------------
   kafka-ui:
@@ -102,17 +132,35 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-# ============================================================================
-# Volumes
-# ============================================================================
+    # --------------------------------------------------------------------------
+  # Metabase - ابزار مصورسازی و BI
+  # --------------------------------------------------------------------------
+  metabase:
+    image: metabase/metabase:latest
+    container_name: metabase
+    hostname: metabase
+    ports:
+      - "3000:3000"
+    environment:
+      # استفاده از H2 به عنوان دیتابیس داخلی Metabase (برای شروع سریع)
+      MB_DB_TYPE: h2
+      MB_DB_FILE: /metabase-data/metabase.db
+      JAVA_OPTS: "-Xmx1g"
+    volumes:
+      - metabase-data:/metabase-data
+      - ./metabase-plugins:/plugins  # پوشه‌ی درایور ClickHouse
+    networks:
+      - services
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
 volumes:
   clickhouse-volume:
   kafka-volume:
+  metabase-data:  # ← این خط را اضافه کنید
 
-# ============================================================================
-# Networks
-# ============================================================================
 networks:
   services:
-    name: service_network
+    name: stream-realtime-data_services   # ← نام جدید (به جای service_network)
     driver: bridge
