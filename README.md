@@ -4,6 +4,8 @@
 
 **A live data pipeline with Kafka and ClickHouse based on the Medallion Architecture**
 
+[![Tests](https://github.com/HoseinFrhni/stream-realtime-data/actions/workflows/tests.yml/badge.svg)](https://github.com/HoseinFrhni/stream-realtime-data/actions/workflows/tests.yml)
+[![Lint](https://github.com/HoseinFrhni/stream-realtime-data/actions/workflows/lint.yml/badge.svg)](https://github.com/HoseinFrhni/stream-realtime-data/actions/workflows/lint.yml)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![Kafka](https://img.shields.io/badge/Kafka-3.9-black)](https://kafka.apache.org/)
 [![ClickHouse](https://img.shields.io/badge/ClickHouse-24.10-yellow)](https://clickhouse.com/)

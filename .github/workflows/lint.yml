@@ -1,0 +1,55 @@
+# ============================================================================
+# Lint Workflow
+# ============================================================================
+# Runs code quality checks (Ruff, Black, MyPy) on every push and PR.
+# ============================================================================
+
+name: Lint
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff black mypy
+
+      - name: Ruff (linter)
+        run: |
+          ruff check . --output-format=github
+        continue-on-error: true
+
+      - name: Black (formatter check)
+        run: |
+          black --check --diff producer.py tests/
+        continue-on-error: true
+
+      - name: MyPy (type checker)
+        run: |
+          mypy producer.py --ignore-missing-imports
+        continue-on-error: true
+
+      - name: Summary
+        run: |
+          echo "## Lint Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All lint checks completed. See logs above for details." >> $GITHUB_STEP_SUMMARY
