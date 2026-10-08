@@ -190,15 +190,19 @@ make producer
 
 | Command | Description |
 |---|---|
+| `make install` | Install Python dependencies |
 | `make up` | Start all services |
 | `make down` | Stop services (data preserved) |
 | `make reset` | Delete everything and start fresh |
+| `make test` | Run all pytest tests |
+| `make test-unit` | Run only unit tests |
+| `make test-cov` | Run tests with coverage report |
+| `make check` | Verify connections and data flow |
 | `make producer` | Run the Producer |
-| `make test` | Test connections and structure |
 | `make sql` | Open ClickHouse SQL console |
-| `make logs` | View all logs |
 | `make status` | Show container status |
-| `make clean` | Clean up temporary files |
+| `make logs` | View all logs |
+| `make clean` | Clean temporary files |
 
 ### Method 2: Manual Setup with Docker Compose
 
